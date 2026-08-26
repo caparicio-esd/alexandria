@@ -23,15 +23,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Verify go.mod/go.sum are sync
+      - name: Verify go.mod and go.sum are in sync
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
       - name: Format
-        run: |
-          go tool gofumpt -l .
-          test -z "$(go tool gofumpt -l .)"
+        run: test -z "$(go tool gofumpt -l .)"
 
       - name: Vet
         run: go vet ./...
@@ -42,7 +40,7 @@ jobs:
       - name: Tests
         run: go test -race -coverprofile=coverage.out ./...
 
-      - name: Vulner
+      - name: Vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   build:

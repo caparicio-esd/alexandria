@@ -1,10 +1,13 @@
-# Binarios y artefactos de build
+# Build artifacts
 /bin/
 /tmp/
 *.exe
 *.test
 
-# Cobertura y perfiles
+# Binary that "go build ./..." drops in the repository root
+/alexandria
+
+# Coverage and profiles
 coverage.out
 coverage.html
 *.prof
@@ -12,15 +15,12 @@ coverage.html
 # Logs
 *.log
 
-# Secretos y config local
+# Secrets and local configuration
 .env
 .env.*
 !.env.example
 
-# Sistema operativo / editores
+# OS and editors
 .DS_Store
 .idea/
 .vscode/
-
-# Binario que deja "go build ./..." en la raiz
-/alexandria

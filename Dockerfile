@@ -2,7 +2,7 @@ FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
-# Capa de dependencias cacheable: solo se invalida si cambian go.mod/go.sum.
+# Cacheable dependency layer: only invalidated when go.mod/go.sum change.
 COPY go.mod go.sum ./
 RUN go mod download
 

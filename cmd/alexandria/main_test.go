@@ -14,8 +14,8 @@ func TestRun(t *testing.T) {
 		args []string
 		want string
 	}{
-		"sin argumentos": {args: nil, want: "alexandria dev"},
-		"con argumentos": {args: []string{"-x"}, want: "alexandria dev"},
+		"no arguments":   {args: nil, want: "alexandria dev"},
+		"with arguments": {args: []string{"-x"}, want: "alexandria dev"},
 	}
 
 	for name, tc := range tests {
@@ -24,17 +24,17 @@ func TestRun(t *testing.T) {
 
 			var out bytes.Buffer
 			if err := run(context.Background(), tc.args, &out); err != nil {
-				t.Fatalf("run() error inesperado: %v", err)
+				t.Fatalf("run() unexpected error: %v", err)
 			}
 
 			if got := strings.TrimSpace(out.String()); got != tc.want {
-				t.Errorf("run() escribio %q, se esperaba %q", got, tc.want)
+				t.Errorf("run() wrote %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestRunContextCancelado(t *testing.T) {
+func TestRunCancelledContext(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -42,6 +42,6 @@ func TestRunContextCancelado(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := run(ctx, nil, &out); err == nil {
-		t.Fatal("run() con contexto cancelado deberia devolver error")
+		t.Fatal("run() with a cancelled context should return an error")
 	}
 }

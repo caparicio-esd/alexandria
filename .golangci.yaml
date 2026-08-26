@@ -2,17 +2,17 @@ version: "2"
 linters:
   default: standard
   enable:
-    - errcheck # errores ignorados
+    - errcheck # unchecked error returns
     - govet
     - staticcheck
     - revive
-    - errorlint # %w y errors.As correctos
+    - errorlint # correct use of %w and errors.As
     - bodyclose
     - contextcheck
     - noctx
     - sqlclosecheck
     - gosec
-    # - misspell  # desactivado: solo tiene diccionarios en ingles y los comentarios de este repo estan en espanol
+    - misspell
     - unconvert
     - wastedassign
   exclusions:
