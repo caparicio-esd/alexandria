@@ -42,3 +42,7 @@ so there is nothing to install globally and versions stay pinned in the reposito
 docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t alexandria .
 docker run --rm alexandria
 ```
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
