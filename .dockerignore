@@ -1,0 +1,16 @@
+.git
+.github
+.gitignore
+.dockerignore
+.air.toml
+.golangci.yaml
+Taskfile.yaml
+Dockerfile
+README.md
+LICENSE
+bin/
+tmp/
+coverage.out
+*.log
+.env
+.DS_Store

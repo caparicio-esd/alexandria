@@ -1,0 +1,56 @@
+version: "3"
+
+vars:
+  BIN: alexandria
+  MAIN: ./cmd/alexandria
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+
+tasks:
+  default:
+    cmds: [{ task: check }]
+
+  fmt:
+    desc: Formatea el codigo con gofumpt.
+    cmds: ["go tool gofumpt -w ."]
+
+  lint:
+    desc: Ejecuta golangci-lint.
+    cmds: ["go tool golangci-lint run"]
+
+  test:
+    desc: Tests con detector de race y perfil de cobertura.
+    cmds: ["go test -race -coverprofile=coverage.out ./..."]
+
+  cover:
+    desc: Abre el informe de cobertura en el navegador.
+    deps: [test]
+    cmds: ["go tool cover -html=coverage.out"]
+
+  build:
+    desc: Compila el binario en bin/.
+    cmds:
+      - go build -ldflags="-s -w -X main.version={{.VERSION}}" -o bin/{{.BIN}} {{.MAIN}}
+
+  run:
+    desc: Ejecuta la aplicacion.
+    cmds: ["go run {{.MAIN}}"]
+
+  dev:
+    desc: Recarga en caliente con air.
+    cmds: ["go tool air"]
+
+  tidy:
+    desc: Sincroniza go.mod y go.sum.
+    cmds: ["go mod tidy"]
+
+  vuln:
+    desc: Escanea vulnerabilidades conocidas.
+    cmds: ["go run golang.org/x/vuln/cmd/govulncheck@latest ./..."]
+
+  check:
+    desc: Pipeline completo: formato, lint y tests.
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test

@@ -1,0 +1,23 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - errcheck # errores ignorados
+    - govet
+    - staticcheck
+    - revive
+    - errorlint # %w y errors.As correctos
+    - bodyclose
+    - contextcheck
+    - noctx
+    - sqlclosecheck
+    - gosec
+    # - misspell  # desactivado: solo tiene diccionarios en ingles y los comentarios de este repo estan en espanol
+    - unconvert
+    - wastedassign
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec, errcheck]
+formatters:
+  enable: [gofumpt, goimports]

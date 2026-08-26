@@ -1,0 +1,26 @@
+# Binarios y artefactos de build
+/bin/
+/tmp/
+*.exe
+*.test
+
+# Cobertura y perfiles
+coverage.out
+coverage.html
+*.prof
+
+# Logs
+*.log
+
+# Secretos y config local
+.env
+.env.*
+!.env.example
+
+# Sistema operativo / editores
+.DS_Store
+.idea/
+.vscode/
+
+# Binario que deja "go build ./..." en la raiz
+/alexandria
