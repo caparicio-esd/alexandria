@@ -49,7 +49,7 @@ tasks:
     cmds: ["go run golang.org/x/vuln/cmd/govulncheck@latest ./..."]
 
   check:
-    desc: Pipeline completo: formato, lint y tests.
+    desc: "Pipeline completo: formato, lint y tests."
     cmds:
       - task: fmt
       - task: lint
