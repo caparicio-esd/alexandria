@@ -67,7 +67,7 @@ func TestRunLinksThenServes(t *testing.T) {
 		t.Fatalf("run() = %v", err)
 	}
 
-	for _, want := range []string{"alexandria dev", "linked as did:jwk:"} {
+	for _, want := range []string{"alexandria dev", "linked", "did:jwk:", "listening"} {
 		if got := out.String(); !strings.Contains(got, want) {
 			t.Errorf("run() wrote %q, want it to contain %q", got, want)
 		}

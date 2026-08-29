@@ -66,7 +66,7 @@ const (
 // The retry policy lives here, at the composition root, and not in the service:
 // how long to wait for a dependency is a deployment decision, not a business
 // rule.
-func linkWallet(ctx context.Context, holder *wallet.Service, out io.Writer) error {
+func linkWallet(ctx context.Context, holder *wallet.Service, out *report) error {
 	ctx, cancel := context.WithTimeout(ctx, linkTimeout)
 	defer cancel()
 
@@ -75,11 +75,7 @@ func linkWallet(ctx context.Context, holder *wallet.Service, out io.Writer) erro
 	for attempt := 1; ; attempt++ {
 		identity, err := holder.Link(ctx)
 		if err == nil {
-			if _, err := fmt.Fprintf(out, "linked as %s\n", identity.ID); err != nil {
-				return fmt.Errorf("writing output: %w", err)
-			}
-
-			return nil
+			return out.linked(identity)
 		}
 
 		// The deadline and the signal both land here as a cancelled context,
@@ -88,9 +84,8 @@ func linkWallet(ctx context.Context, holder *wallet.Service, out io.Writer) erro
 			return fmt.Errorf("linking wallet after %d attempts: %w", attempt, err)
 		}
 
-		if _, err := fmt.Fprintf(out, "wallet not ready (attempt %d, retrying in %s): %v\n",
-			attempt, backoff, err); err != nil {
-			return fmt.Errorf("writing output: %w", err)
+		if err := out.waiting(attempt, backoff.String(), err.Error()); err != nil {
+			return err
 		}
 
 		select {
@@ -154,8 +149,10 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 
-	if _, err := fmt.Fprintf(stdout, "alexandria %s\n", version); err != nil {
-		return fmt.Errorf("writing output: %w", err)
+	out := newReport(stdout, os.Environ())
+
+	if err := out.summary(version, cfg); err != nil {
+		return err
 	}
 
 	walletURL, err := cfg.Wallet.APIURL(config.HostHTTP)
@@ -177,7 +174,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	walletRouter := rest.NewWalletRouter(walletService)
 	coreRouter := rest.NewCoreRouter(walletRouter)
 
-	if err := linkWallet(ctx, walletService, stdout); err != nil {
+	if err := linkWallet(ctx, walletService, out); err != nil {
 		return err
 	}
 
@@ -190,6 +187,10 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		Addr:              ":" + cfg.Common.Hosts.HTTP.PrivatePort(),
 		Handler:           engine,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	if err := out.listening(server.Addr); err != nil {
+		return err
 	}
 
 	// The server runs in its own goroutine so the main flow can block on ctx

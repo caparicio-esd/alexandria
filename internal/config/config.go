@@ -62,6 +62,18 @@ type Config struct {
 	// Gaia is nil on a deployment that publishes no Gaia-X participant
 	// description, which the file spells as `gaia_config: null`.
 	Gaia *Gaia `mapstructure:"gaia_config"`
+
+	// source is the document this was read from. It is unexported and has no
+	// mapstructure tag on purpose: it describes the load, not the deployment,
+	// so a file that tried to set it would be rejected like any other unknown
+	// key.
+	source string
+}
+
+// Source names the document this configuration was read from, for the operator
+// asking which file the process actually picked up.
+func (c *Config) Source() string {
+	return c.source
 }
 
 // Load reads and validates the ssi_auth section of the deployment file at path.
@@ -77,6 +89,8 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config %q: %w", path, err)
 	}
+
+	cfg.source = path
 
 	return cfg, nil
 }
@@ -101,6 +115,8 @@ func Discover(dirs ...string) (*Config, error) {
 		return nil, fmt.Errorf("config %q: %w", loader.ConfigFileUsed(), err)
 	}
 
+	cfg.source = loader.ConfigFileUsed()
+
 	return cfg, nil
 }
 
@@ -116,7 +132,14 @@ func Decode(r io.Reader) (*Config, error) {
 		return nil, fmt.Errorf("decoding yaml: %w", err)
 	}
 
-	return unmarshal(loader)
+	cfg, err := unmarshal(loader)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg.source = "<reader>"
+
+	return cfg, nil
 }
 
 // EnvPrefix is the prefix of the environment variables that override the file.
