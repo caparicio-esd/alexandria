@@ -2,10 +2,10 @@ package wallet
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"sync"
 
-	"github.com/caparicio-esd/alexandria/internal/did"
+	"github.com/trustbloc/did-go/doc/did"
 )
 
 // Service holds the wallet use cases. It is the centre of the hexagon: every
@@ -13,42 +13,47 @@ import (
 // rules stay free of transport and persistence concerns. Driving adapters, such
 // as the REST router, consume this type directly.
 type Service struct {
-	dids        DidRepository
-	keys        KeyStore
-	credentials CredentialRepository
-	directory   Directory
-	clock       Clock
+	wallet   Wallet
+	clock    Clock
+	mu       sync.RWMutex
+	identity *Did
 }
 
 // NewService wires the wallet use cases to their outbound dependencies. The
 // constructor is the only door: the fields stay unexported so no adapter can
 // swap a dependency after construction.
 func NewService(
-	dids DidRepository,
-	keys KeyStore,
-	credentials CredentialRepository,
-	directory Directory,
+	wallet Wallet,
 	clock Clock,
 ) *Service {
 	return &Service{
-		dids:        dids,
-		keys:        keys,
-		credentials: credentials,
-		directory:   directory,
-		clock:       clock,
+		wallet:   wallet,
+		clock:    clock,
+		mu:       sync.RWMutex{},
+		identity: nil,
 	}
 }
 
 // ===== Linking ===============================================================
 
-// Link registers the wallet against the external ecosystem directory.
-func (s *Service) Link(ctx context.Context) error {
-	panic("wallet: Link not implemented")
+// Link refreshes the wallet identity from the outsourced wallet.
+func (s *Service) Link(ctx context.Context) (Did, error) {
+	did, err := s.wallet.Link(ctx)
+	if err != nil {
+		return Did{}, fmt.Errorf("linking wallet: %w", err)
+	}
+
+	if did.ID == "" {
+		return Did{}, fmt.Errorf("wallet reported no default did: %w", ErrNotLinked)
+	}
+	s.setIdentity(did)
+	return did, nil
 }
 
 // IsLinked reports whether the wallet is registered in the directory.
 func (s *Service) IsLinked(ctx context.Context) bool {
-	panic("wallet: IsLinked not implemented")
+	_, ok := s.identitySnapshot()
+	return ok
 }
 
 // ===== Keys ==================================================================
@@ -77,80 +82,27 @@ func (s *Service) Keys(ctx context.Context) ([]Key, error) {
 // secondary ports around them.
 func (s *Service) RegisterDid(
 	ctx context.Context,
-	builder DidBuilder,
-	keysID []string,
-	alias *string,
-	service []did.Service,
-) (Did, error) {
-	keys, err := s.resolveKeys(ctx, keysID)
-	if err != nil {
-		return Did{}, err
-	}
-
-	// The variable is not named did: that is the shared kernel package.
-	minted, err := builder.Build(keys, service, s.clock.Now(), derefOr(alias, ""))
-	if err != nil {
-		return Did{}, err
-	}
-
-	id := minted.ID.String()
-
-	if _, err := s.dids.ByID(ctx, id); err == nil {
-		return Did{}, fmt.Errorf("%w: did %s already registered", ErrConflict, id)
-	} else if !errors.Is(err, ErrNotFound) {
-		return Did{}, fmt.Errorf("checking for an existing did: %w", err)
-	}
-
-	if err := s.dids.Save(ctx, minted); err != nil {
-		return Did{}, fmt.Errorf("saving did %s: %w", id, err)
-	}
-
-	return minted, nil
-}
-
-// resolveKeys loads every referenced key, rejecting unknown and duplicated ids.
-func (s *Service) resolveKeys(ctx context.Context, keysID []string) ([]Key, error) {
-	seen := make(map[string]struct{}, len(keysID))
-	keys := make([]Key, 0, len(keysID))
-
-	for i, id := range keysID {
-		if _, dup := seen[id]; dup {
-			return nil, invalid(fmt.Sprintf("keys_id[%d]", i), "duplicated key id "+id)
-		}
-		seen[id] = struct{}{}
-
-		k, err := s.keys.ByID(ctx, id)
-		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				return nil, fmt.Errorf("%w: key %s", ErrNotFound, id)
-			}
-
-			return nil, fmt.Errorf("loading key %s: %w", id, err)
-		}
-
-		keys = append(keys, k)
-	}
-
-	return keys, nil
-}
-
-// derefOr returns the pointed-to value, or fallback when the pointer is nil.
-func derefOr[T any](p *T, fallback T) T {
-	if p == nil {
-		return fallback
-	}
-
-	return *p
+) (string, error) {
+	panic("wallet: Did not implemented")
 }
 
 // Did resolves the identifier of the wallet default DID.
 func (s *Service) Did(ctx context.Context) (string, error) {
-	panic("wallet: Did not implemented")
+	id, ok := s.identitySnapshot()
+	if !ok {
+		return "", ErrNotLinked
+	}
+	return id.ID, nil
 }
 
 // DidDoc resolves the DID Document of the default DID, as served publicly.
-func (s *Service) DidDoc(ctx context.Context) (did.Document, error) {
-	panic("wallet: DidDoc not implemented")
+func (s *Service) DidDoc(ctx context.Context) (did.Doc, error) {
+	identity, ok := s.identitySnapshot()
+	if !ok {
+		return did.Doc{}, ErrNotLinked
+	}
+
+	return identity.Document, nil
 }
 
 // DeleteDid drops a DID and its verification method bindings.
@@ -159,24 +111,24 @@ func (s *Service) DeleteDid(ctx context.Context, id string) error {
 }
 
 // SetDefaultDid promotes a DID to be the wallet primary identity.
-func (s *Service) SetDefaultDid(ctx context.Context, id string) (Did, error) {
+func (s *Service) SetDefaultDid(ctx context.Context, id string) (string, error) {
 	panic("wallet: SetDefaultDid not implemented")
 }
 
 // ===== DID verification methods ==============================================
 
 // AddKeyToDid binds a key into the verification methods of a DID.
-func (s *Service) AddKeyToDid(ctx context.Context, didID, keyID string) (Did, error) {
+func (s *Service) AddKeyToDid(ctx context.Context, didID, keyID string) (string, error) {
 	panic("wallet: AddKeyToDid not implemented")
 }
 
 // RemoveKeyFromDid unbinds a key from the verification methods of a DID.
-func (s *Service) RemoveKeyFromDid(ctx context.Context, didID, keyID string) (Did, error) {
+func (s *Service) RemoveKeyFromDid(ctx context.Context, didID, keyID string) (string, error) {
 	panic("wallet: RemoveKeyFromDid not implemented")
 }
 
 // SetDefaultKey promotes a key to be the default verification method of a DID.
-func (s *Service) SetDefaultKey(ctx context.Context, didID, keyID string) (Did, error) {
+func (s *Service) SetDefaultKey(ctx context.Context, didID, keyID string) (string, error) {
 	panic("wallet: SetDefaultKey not implemented")
 }
 
@@ -210,4 +162,33 @@ func (s *Service) ProcessOid4vci(ctx context.Context, uri OidcURI) error {
 // ProcessOid4vp answers an outbound OID4VP presentation request.
 func (s *Service) ProcessOid4vp(ctx context.Context, uri OidcURI) error {
 	panic("wallet: ProcessOid4vp not implemented")
+}
+
+// =============================================================
+// Accesors
+// =============================================================
+
+// setIdentity replaces the active identity.
+func (s *Service) setIdentity(d Did) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.identity = &d
+}
+
+// adopt replaces the active identity only if the wallet promoted this DID
+// to default. Mutations funnel through here.
+func (s *Service) adopt(d Did) {
+	if d.Default {
+		s.setIdentity(d)
+	}
+}
+
+// identitySnapshot returns the active identity, or false if not linked yet.
+func (s *Service) identitySnapshot() (Did, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.identity == nil {
+		return Did{}, false
+	}
+	return *s.identity, true
 }

@@ -5,9 +5,6 @@ import (
 	"fmt"
 )
 
-// Sentinel errors crossing the ports. Adapters match on them with errors.Is and
-// translate them to their own vocabulary; no infrastructure error ever reaches a
-// driving adapter unwrapped.
 var (
 	// ErrNotFound reports that a referenced entity does not exist.
 	ErrNotFound = errors.New("not found")
