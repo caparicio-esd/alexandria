@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,12 +29,18 @@ var _ wallet.Wallet = (*Adapter)(nil)
 // qualifier already carries the name: callers read fafnir.Adapter.
 type Adapter struct {
 	http *resty.Client
+	// logger is scoped to this component, so every record it emits is
+	// attributable to the wallet adapter rather than to the process at large.
+	logger *slog.Logger
 }
 
 // New builds an adapter pointed at the given Fafnir base URL, for example
 // "http://localhost:7002". The URL is validated here so a typo fails at
 // startup instead of on the first request.
-func New(baseURL string) (*Adapter, error) {
+//
+// The logger is expected to be scoped by the composition root; a nil one falls
+// back to the default so a test can build an adapter without ceremony.
+func New(baseURL string, logger *slog.Logger) (*Adapter, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("fafnir: parsing base url %q: %w", baseURL, err)
@@ -48,7 +55,11 @@ func New(baseURL string) (*Adapter, error) {
 		SetTimeout(defaultTimeout).
 		SetHeader("Accept", "application/json")
 
-	return &Adapter{http: client}, nil
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return &Adapter{http: client, logger: logger}, nil
 }
 
 // Close releases the transport held by the underlying client. Call it once, when
@@ -64,14 +75,24 @@ func (a *Adapter) Link(ctx context.Context) (wallet.Did, error) {
 
 	var out didResp
 
+	started := time.Now()
+
 	res, err := a.http.R().
 		SetContext(ctx).
 		SetResult(&out).
 		Get(path)
 	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodGet, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
 		return wallet.Did{}, fmt.Errorf("fafnir: calling %s: %w", path, err)
 	}
 	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodGet, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
 
 	if res.IsStatusFailure() {
 		return wallet.Did{}, statusError(res.StatusCode(), path, res.Bytes())

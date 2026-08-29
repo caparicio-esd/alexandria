@@ -2,7 +2,6 @@ package rest
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
@@ -23,6 +22,11 @@ type errorBody struct {
 // Domain errors carry their own message and are safe to echo; anything that
 // falls through is infrastructure, so it is logged in full and answered opaque.
 func respondError(c *gin.Context, err error) {
+	// Filed on the context rather than logged here: the access log emits one
+	// record per request, at a level chosen from the status, and it picks this
+	// up. Logging in both places would double-count every failure.
+	_ = c.Error(err)
+
 	var invalid wallet.ValidationError
 
 	switch {
@@ -46,8 +50,8 @@ func respondError(c *gin.Context, err error) {
 		c.AbortWithStatusJSON(http.StatusPreconditionFailed, errorBody{Error: err.Error()})
 
 	default:
-		slog.ErrorContext(c.Request.Context(), "unhandled error",
-			"path", c.FullPath(), "err", err)
+		// Infrastructure failures are answered opaque: the cause reaches the
+		// log through c.Error above, not the caller.
 		c.AbortWithStatusJSON(http.StatusInternalServerError,
 			errorBody{Error: "internal error"})
 	}

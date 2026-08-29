@@ -82,6 +82,45 @@ func (r *report) summary(version string, cfg *config.Config) error {
 	return r.line(borderStyle.Render(strings.Join(rows, "\n")))
 }
 
+// internal reports the diagnostics listener, so nobody has to guess which port
+// Prometheus should scrape.
+func (r *report) internal(addr string, cfg config.Observability) error {
+	served := make([]string, 0, 2)
+	if cfg.Metrics {
+		served = append(served, "/metrics")
+	}
+
+	if cfg.Pprof {
+		served = append(served, "/debug/pprof")
+	}
+
+	return r.line(faintStyle.Render(" · internal   " + addr + " " + strings.Join(served, " ")))
+}
+
+// summaryAttrs is the startup summary as structured log attributes, for the
+// deployments where the table would be noise in a log pipeline.
+//
+// It carries the same facts as the table on purpose: an operator reading JSON
+// should not have to run the binary in a terminal to find out what it loaded.
+func summaryAttrs(cfg *config.Config) []any {
+	walletURL, err := cfg.Wallet.APIURL(config.HostHTTP)
+	if err != nil {
+		walletURL = "unresolved"
+	}
+
+	return []any{
+		"config", cfg.Source(),
+		"node", cfg.Common.Hosts.HTTP.URL(),
+		"api", cfg.Common.API.Prefix(),
+		"wallet", string(cfg.Wallet.Kind),
+		"wallet_url", walletURL,
+		"database", databaseSummary(cfg.Common.DB),
+		"did_method", string(cfg.Did.Method),
+		"policy", policySummary(cfg.Verify),
+		"mode", modeSummary(cfg.Common.Connection),
+	}
+}
+
 // linked reports the identity the wallet handed over.
 func (r *report) linked(identity wallet.Did) error {
 	if err := r.line(okStyle.Render(" ✓ linked") + "   " + valueStyle.Render(shortenDid(identity.ID))); err != nil {

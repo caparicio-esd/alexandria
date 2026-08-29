@@ -45,8 +45,8 @@ func stubWallet(t *testing.T) {
 		t.Fatalf("splitting stub address %q: %v", server.URL, err)
 	}
 
-	t.Setenv("ALEXANDRIA_SSI_AUTH_WALLET_CONFIG_API_HTTP_URL", host)
-	t.Setenv("ALEXANDRIA_SSI_AUTH_WALLET_CONFIG_API_HTTP_PORT", port)
+	t.Setenv("ALEXANDRIA_WALLET_CONFIG_API_HTTP_URL", host)
+	t.Setenv("ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT", port)
 }
 
 // TestRunLinksThenServes walks the whole startup: load, link, serve, shut down.
@@ -74,25 +74,32 @@ func TestRunLinksThenServes(t *testing.T) {
 	}
 }
 
-// TestRunGivesUpOnAnAbsentWallet pins the other half of the handshake: the node
-// must not come up without an identity, and it must say why.
-func TestRunGivesUpOnAnAbsentWallet(t *testing.T) {
-	t.Parallel()
+// TestRunComesUpWithoutAWallet pins the other half of the handshake: past the
+// startup budget the node serves anyway, and says so, rather than refusing to
+// start and turning a wallet outage into a restart loop.
+//
+// The budget is cut to a few hundred milliseconds through the environment, so
+// the test does not sit out the ten-second default.
+func TestRunComesUpWithoutAWallet(t *testing.T) {
+	t.Setenv("ALEXANDRIA_WALLET_CONFIG_STARTUP_LINK_TIMEOUT", "200ms")
+	// A port nothing is listening on.
+	t.Setenv("ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT", "1")
 
-	// Already cancelled, so the retry loop reports the failure on its first
-	// pass instead of waiting out linkTimeout.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
 	var out bytes.Buffer
 
-	err := run(ctx, []string{"-config", "testdata/config.yaml"}, &out)
-	if err == nil {
-		t.Fatal("run() came up without a wallet, want an error")
+	if err := run(ctx, []string{"-config", "testdata/config.yaml"}, &out); err != nil {
+		t.Fatalf("run() = %v, want the node to come up anyway", err)
 	}
 
-	if !strings.Contains(err.Error(), "linking wallet") {
-		t.Errorf("run() error = %v, want it to name the wallet handshake", err)
+	if got := out.String(); !strings.Contains(got, "not linked within the startup budget") {
+		t.Errorf("run() wrote %q, want it to report the unlinked wallet", got)
+	}
+
+	if got := out.String(); !strings.Contains(got, "listening") {
+		t.Errorf("run() wrote %q, want it to serve anyway", got)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/caparicio-esd/alexandria/internal/config"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
@@ -289,11 +290,11 @@ ssi_auth:
 
 	// One restart, every complaint.
 	for _, want := range []string{
-		"ssi_auth.common_config.api.version",
-		"ssi_auth.common_config.db.url",
-		"ssi_auth.common_config.hosts.http.protocol",
-		"ssi_auth.common_config.hosts.http.url",
-		"ssi_auth.did_config.domain",
+		"common_config.api.version",
+		"common_config.db.url",
+		"common_config.hosts.http.protocol",
+		"common_config.hosts.http.url",
+		"did_config.domain",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
@@ -334,5 +335,74 @@ func TestEnvOverride(t *testing.T) {
 
 	if want := "http://127.0.0.1:9999"; got != want {
 		t.Errorf("Wallet.APIURL() = %q, want %q", got, want)
+	}
+}
+
+// TestFlatDocument covers a file written for this node alone, with no
+// ssi_auth wrapper: the same sections, at the root of the document.
+func TestFlatDocument(t *testing.T) {
+	t.Parallel()
+
+	const doc = `
+common_config:
+  hosts: {http: {protocol: http, url: 127.0.0.1, port: '1200', internal_port: null}, grpc: null, graphql: null}
+  db: {db_type: Postgres, url: 127.0.0.1, port: '1400'}
+  api: {version: v1, openapi_path: ./openapi.json}
+  connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
+wallet_config:
+  wallet: Fafnir
+  api: {http: {protocol: http, url: 127.0.0.1, port: '7002'}, grpc: null, graphql: null}
+client_config: {class_id: Provider, display: null}
+verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: [DataSpaceParticipant]}
+did_config: {type: Jwk}
+gaia_config: null
+`
+
+	cfg, err := config.Decode(strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Decode() = %v", err)
+	}
+
+	if got, want := cfg.Common.Hosts.HTTP.URL(), "http://127.0.0.1:1200"; got != want {
+		t.Errorf("node URL = %q, want %q", got, want)
+	}
+
+	if got, want := cfg.Client.ClassID, "Provider"; got != want {
+		t.Errorf("Client.ClassID = %q, want %q", got, want)
+	}
+
+	// The defaults have to land on the flat layout too, not only the nested one.
+	if got, want := cfg.Observability.Port, "2112"; got != want {
+		t.Errorf("Observability.Port = %q, want %q", got, want)
+	}
+
+	if got, want := cfg.Wallet.StartupLinkTimeout, 10*time.Second; got != want {
+		t.Errorf("StartupLinkTimeout = %s, want %s", got, want)
+	}
+}
+
+// TestFlatDocumentStaysStrict: without a sibling service to excuse it, an
+// unknown key at the root of a flat file is a typo and must be fatal.
+func TestFlatDocumentStaysStrict(t *testing.T) {
+	t.Parallel()
+
+	const doc = `
+common_config:
+  hosts: {http: {protocol: http, url: 127.0.0.1, port: '1200'}}
+  db: {db_type: memory}
+  api: {version: v1, openapi_path: ./openapi.json}
+  connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
+wallet_config:
+  wallet: Fafnir
+  api: {http: {protocol: http, url: 127.0.0.1, port: '7002'}}
+client_config: {class_id: Provider, display: null}
+verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: []}
+did_config: {type: Jwk}
+gaia_config: null
+walet_config: {typo: true}
+`
+
+	if _, err := config.Decode(strings.NewReader(doc)); err == nil {
+		t.Fatal("Decode() accepted an unknown root key, want an error")
 	}
 }

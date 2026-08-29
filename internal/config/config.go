@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
@@ -36,7 +37,11 @@ func invalid(field, reason string) error {
 	return fmt.Errorf("%w: %s: %s", ErrInvalid, field, reason)
 }
 
-// document is the deployment file as a whole.
+// sectionKey is the section a shared deployment file files this node under.
+const sectionKey = "ssi_auth"
+
+// document is a shared deployment file: several services in one YAML, of which
+// only ssi_auth belongs to this node.
 //
 // Only ssi_auth is modelled. Everything else — the other services, and the
 // top-level anchor definitions the file uses to avoid repeating itself — lands
@@ -55,10 +60,13 @@ type document struct {
 // seed, which the deployment file carries for local runs. See AdminSeed.
 type Config struct {
 	Common Common `mapstructure:"common_config"`
-	Wallet Wallet `mapstructure:"wallet_config"`
-	Client Client `mapstructure:"client_config"`
-	Verify Verify `mapstructure:"verify_req_config"`
-	Did    Did    `mapstructure:"did_config"`
+	// Observability is optional: a deployment file that omits it gets the
+	// defaults set on the loader, which are the ones a container wants.
+	Observability Observability `mapstructure:"observability"`
+	Wallet        Wallet        `mapstructure:"wallet_config"`
+	Client        Client        `mapstructure:"client_config"`
+	Verify        Verify        `mapstructure:"verify_req_config"`
+	Did           Did           `mapstructure:"did_config"`
 	// Gaia is nil on a deployment that publishes no Gaia-X participant
 	// description, which the file spells as `gaia_config: null`.
 	Gaia *Gaia `mapstructure:"gaia_config"`
@@ -164,18 +172,76 @@ func newLoader() *viper.Viper {
 	return loader
 }
 
+// applyDefaults registers the fallbacks under the prefix the document uses.
+//
+// Defaults live on the loader rather than in the structs so a deployment file
+// written before a setting existed keeps working and still gets sensible
+// behaviour. Viper folds them into the document it unmarshals.
+//
+// They are applied after the document is read, not before: whether the file is
+// nested is exactly what a default would otherwise make impossible to tell,
+// since a default on "…" makes that key look present in every file.
+func applyDefaults(loader *viper.Viper, prefix string) {
+	for key, value := range map[string]any{
+		"observability.log_level":            "info",
+		"observability.log_format":           string(LogFormatAuto),
+		"observability.metrics":              true,
+		"observability.pprof":                false,
+		"observability.port":                 "2112",
+		"wallet_config.startup_link_timeout": "10s",
+	} {
+		loader.SetDefault(prefix+key, value)
+	}
+}
+
 // unmarshal projects a loaded document onto Config and validates it.
+//
+// Two layouts are accepted, because the same parser serves two kinds of file:
+//
+//   - Flat, where the document is this node's configuration and nothing else.
+//     That is what a file written for alexandria alone looks like.
+//   - Nested under "ssi_auth", which is how the shared dataspace deployment
+//     file — the one catalog, contracts, transfer and gateway also read — files
+//     this node's section.
+//
+// The layout is inferred from whether the section is present, so neither kind
+// of file needs a marker saying which it is.
 func unmarshal(loader *viper.Viper) (*Config, error) {
-	var doc document
+	nested := loader.Get(sectionKey) != nil
+
+	prefix := ""
+	if nested {
+		prefix = sectionKey + "."
+	}
+
+	applyDefaults(loader, prefix)
 
 	// ErrorUnused is what makes a typo fatal. Viper does not offer strict
 	// decoding of its own, so it is set on the mapstructure decoder underneath:
-	// a key nobody consumed is a key the operator got wrong. The sibling
-	// services stay exempt because document.Rest consumes them.
-	err := loader.Unmarshal(&doc, func(cfg *mapstructure.DecoderConfig) {
+	// a key nobody consumed is a key the operator got wrong.
+	strict := func(cfg *mapstructure.DecoderConfig) {
 		cfg.ErrorUnused = true
-	})
-	if err != nil {
+	}
+
+	if !nested {
+		var cfg Config
+
+		if err := loader.Unmarshal(&cfg, strict); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
+		}
+
+		if err := cfg.Validate(); err != nil {
+			return nil, err
+		}
+
+		return &cfg, nil
+	}
+
+	// In a shared file the sibling services stay exempt from strict decoding,
+	// because document.Rest consumes them.
+	var doc document
+
+	if err := loader.Unmarshal(&doc, strict); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 
@@ -195,8 +261,9 @@ func (c *Config) Validate() error {
 	return errors.Join(
 		c.Common.API.Validate(),
 		c.Common.DB.Validate(),
-		c.Common.Hosts.Validate("ssi_auth.common_config.hosts"),
+		c.Common.Hosts.Validate("common_config.hosts"),
 		c.Did.Validate(),
+		c.Observability.Validate(),
 		c.Wallet.Validate(),
 	)
 }
@@ -236,7 +303,7 @@ type API struct {
 // Validate implements the section contract.
 func (a API) Validate() error {
 	if a.Version == "" {
-		return invalid("ssi_auth.common_config.api.version", `must be set, e.g. "v1"`)
+		return invalid("common_config.api.version", `must be set, e.g. "v1"`)
 	}
 
 	return nil
@@ -254,7 +321,7 @@ func (a API) Prefix() string {
 // fail only on the route that needs it.
 func (a API) OpenAPI() ([]byte, error) {
 	if a.OpenAPIPath == "" {
-		return nil, invalid("ssi_auth.common_config.api.openapi_path", "no OpenAPI document configured")
+		return nil, invalid("common_config.api.openapi_path", "no OpenAPI document configured")
 	}
 
 	doc, err := os.ReadFile(a.OpenAPIPath) //nolint:gosec // operator-supplied path, by design
@@ -323,6 +390,11 @@ type Wallet struct {
 	Kind Kind `mapstructure:"wallet"`
 	// API is the wallet endpoint matrix, one entry per transport.
 	API Hosts `mapstructure:"api"`
+	// StartupLinkTimeout is how long startup blocks waiting for the wallet
+	// before giving up and continuing in the background. A node and its wallet
+	// usually come up together, so a short wait catches the common case; past
+	// it, readiness is the better place to report the problem.
+	StartupLinkTimeout time.Duration `mapstructure:"startup_link_timeout"`
 }
 
 // Validate implements the section contract, and canonicalises the product name:
@@ -331,10 +403,14 @@ func (w *Wallet) Validate() error {
 	w.Kind = Kind(strings.ToLower(strings.TrimSpace(string(w.Kind))))
 
 	if w.Kind != KindFafnir {
-		return invalid("ssi_auth.wallet_config.wallet", fmt.Sprintf("unsupported wallet %q", w.Kind))
+		return invalid("wallet_config.wallet", fmt.Sprintf("unsupported wallet %q", w.Kind))
 	}
 
-	return w.API.Validate("ssi_auth.wallet_config.api")
+	if w.StartupLinkTimeout < 0 {
+		return invalid("wallet_config.startup_link_timeout", "must not be negative")
+	}
+
+	return w.API.Validate("wallet_config.api")
 }
 
 // APIURL resolves the wallet endpoint for a transport.

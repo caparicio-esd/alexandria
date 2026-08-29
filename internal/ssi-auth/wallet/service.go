@@ -3,6 +3,7 @@ package wallet
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/trustbloc/did-go/doc/did"
@@ -13,8 +14,12 @@ import (
 // rules stay free of transport and persistence concerns. Driving adapters, such
 // as the REST router, consume this type directly.
 type Service struct {
-	wallet   Wallet
-	clock    Clock
+	wallet Wallet
+	clock  Clock
+	// logger is a port like any other: the domain states what it wants to
+	// record, and the composition root decides where that goes and under which
+	// module and component it is filed.
+	logger   *slog.Logger
 	mu       sync.RWMutex
 	identity *Did
 }
@@ -22,13 +27,21 @@ type Service struct {
 // NewService wires the wallet use cases to their outbound dependencies. The
 // constructor is the only door: the fields stay unexported so no adapter can
 // swap a dependency after construction.
+// A nil logger falls back to the slog default, so a test can build a service
+// without wiring one.
 func NewService(
 	wallet Wallet,
 	clock Clock,
+	logger *slog.Logger,
 ) *Service {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &Service{
 		wallet:   wallet,
 		clock:    clock,
+		logger:   logger,
 		mu:       sync.RWMutex{},
 		identity: nil,
 	}
@@ -47,6 +60,8 @@ func (s *Service) Link(ctx context.Context) (Did, error) {
 		return Did{}, fmt.Errorf("wallet reported no default did: %w", ErrNotLinked)
 	}
 	s.setIdentity(did)
+	s.logger.InfoContext(ctx, "identity established", "did", did.ID, "alias", did.Alias)
+
 	return did, nil
 }
 

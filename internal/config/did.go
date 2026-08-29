@@ -33,7 +33,7 @@ type Did struct {
 func (d *Did) Validate() error {
 	method, err := wallet.ParseMethod(string(d.Method))
 	if err != nil {
-		return fmt.Errorf("%w: ssi_auth.did_config.type: %w", ErrInvalid, err)
+		return fmt.Errorf("%w: did_config.type: %w", ErrInvalid, err)
 	}
 
 	d.Method = method
@@ -41,13 +41,13 @@ func (d *Did) Validate() error {
 	switch method {
 	case wallet.MethodWeb:
 		if d.Domain == "" {
-			return invalid("ssi_auth.did_config.domain", "did:web needs a domain to resolve from")
+			return invalid("did_config.domain", "did:web needs a domain to resolve from")
 		}
 	case wallet.MethodJwk:
 		// Rejected rather than ignored: a domain under did:jwk means the
 		// operator believes it does something, and it does not.
 		if d.Domain != "" || d.Path != "" || d.Port != "" {
-			return invalid("ssi_auth.did_config", "did:jwk takes no domain, path or port")
+			return invalid("did_config", "did:jwk takes no domain, path or port")
 		}
 	}
 

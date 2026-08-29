@@ -55,12 +55,12 @@ func (d *Database) Validate() error {
 		return nil
 	case DriverPostgres, DriverMySQL, DriverSQLite, DriverMongo:
 		if d.Host == "" {
-			return invalid("ssi_auth.common_config.db.url", "must be set for driver "+string(d.Driver))
+			return invalid("common_config.db.url", "must be set for driver "+string(d.Driver))
 		}
 
 		return nil
 	default:
-		return invalid("ssi_auth.common_config.db.db_type", fmt.Sprintf("unknown driver %q", d.Driver))
+		return invalid("common_config.db.db_type", fmt.Sprintf("unknown driver %q", d.Driver))
 	}
 }
 
