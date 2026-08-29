@@ -1,0 +1,59 @@
+# Local development deployment.
+#
+# This is the file `alexandria` picks up with no --config flag: Discover looks
+# for config.yaml in ".", "./config" and "/etc/alexandria", in that order.
+#
+# It follows the shape of the shared dataspace deployment files, of which only
+# the ssi_auth section is read here — the sibling services are ignored, so this
+# file and a full eunomia deployment file are interchangeable.
+#
+# Any setting can be overridden from the environment without editing the file:
+# the variable is ALEXANDRIA_ plus the dotted path, upper-cased. To point at a
+# wallet on another port:
+#
+#   ALEXANDRIA_SSI_AUTH_WALLET_CONFIG_API_HTTP_PORT=7001 task dev
+#
+# Carries no secrets: database credentials and key material are resolved at run
+# time from the environment and from Vault.
+
+ssi_auth:
+  common_config:
+    hosts:
+      http:
+        protocol: 'http'
+        url: '127.0.0.1'
+        port: '1200'
+        internal_port: null
+      grpc: null
+      graphql: null
+    db:
+      db_type: Postgres
+      url: '127.0.0.1'
+      port: '1400'
+    api:
+      version: 'v1'
+      openapi_path: './static/specs/openapi/merged_openapi.json'
+    connection:
+      is_local: true
+      is_prod: false
+      is_vault_real: false
+      has_tls_proxy: false
+  wallet_config:
+    wallet: Fafnir
+    api:
+      http:
+        protocol: 'http'
+        url: '127.0.0.1'
+        port: '7002'
+      grpc: null
+      graphql: null
+  client_config:
+    class_id: 'Provider'
+    display: null
+  verify_req_config:
+    is_cert_allowed: false
+    auto_approve_cert: false
+    vcs_requested: [DataSpaceParticipant]
+  did_config:
+    type: Jwk
+  gaia_config: null
