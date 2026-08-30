@@ -1,11 +1,8 @@
-// Package config loads the node configuration from the deployment's YAML
-// document.
+// Package config loads the node configuration from a YAML document.
 //
-// The file is shared across every service of the dataspace deployment —
-// catalog, contracts, transfer, gateway and this one — so loading it means
-// picking one section out of a larger document. Only the ssi_auth section is
-// modelled here; the siblings are absorbed and ignored, which lets one
-// operator-maintained file drive services written in different languages.
+// The document is flat: its sections are this node's configuration and nothing
+// else. Decoding is strict, so an unknown key is an error rather than a setting
+// silently left at its default.
 //
 // It is a driven adapter like any other: it knows the file format, and it hands
 // the composition root plain values. The domain never imports it, and no type
@@ -37,23 +34,7 @@ func invalid(field, reason string) error {
 	return fmt.Errorf("%w: %s: %s", ErrInvalid, field, reason)
 }
 
-// sectionKey is the section a shared deployment file files this node under.
-const sectionKey = "ssi_auth"
-
-// document is a shared deployment file: several services in one YAML, of which
-// only ssi_auth belongs to this node.
-//
-// Only ssi_auth is modelled. Everything else — the other services, and the
-// top-level anchor definitions the file uses to avoid repeating itself — lands
-// in Rest and is discarded. The inline map is what makes that possible while
-// strict field checking still applies inside the section we do model: without
-// it, the decoder would reject the file for naming a service we do not run.
-type document struct {
-	SSIAuth Config         `mapstructure:"ssi_auth"`
-	Rest    map[string]any `mapstructure:",remain"`
-}
-
-// Config is the ssi_auth section: everything this node needs to run.
+// Config is the whole node configuration: one flat YAML document.
 //
 // Secrets are largely absent by design — key material comes from Vault and
 // database credentials from the environment — with the exception of the admin
@@ -72,9 +53,8 @@ type Config struct {
 	Gaia *Gaia `mapstructure:"gaia_config"`
 
 	// source is the document this was read from. It is unexported and has no
-	// mapstructure tag on purpose: it describes the load, not the deployment,
-	// so a file that tried to set it would be rejected like any other unknown
-	// key.
+	// mapstructure tag on purpose: it describes the load, not the node, so a
+	// file that tried to set it would be rejected like any other unknown key.
 	source string
 }
 
@@ -84,7 +64,7 @@ func (c *Config) Source() string {
 	return c.source
 }
 
-// Load reads and validates the ssi_auth section of the deployment file at path.
+// Load reads and validates the configuration document at path.
 func Load(path string) (*Config, error) {
 	loader := newLoader()
 	loader.SetConfigFile(path)
@@ -154,7 +134,7 @@ func Decode(r io.Reader) (*Config, error) {
 //
 // The rest of the variable name is the dotted path to the setting, upper-cased
 // with underscores, so the wallet port is
-// ALEXANDRIA_SSI_AUTH_WALLET_CONFIG_API_HTTP_PORT.
+// ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT.
 const EnvPrefix = "ALEXANDRIA"
 
 // newLoader builds a Viper instance with the environment wired in.
@@ -172,16 +152,12 @@ func newLoader() *viper.Viper {
 	return loader
 }
 
-// applyDefaults registers the fallbacks under the prefix the document uses.
+// applyDefaults registers the fallbacks.
 //
-// Defaults live on the loader rather than in the structs so a deployment file
+// They live on the loader rather than in the structs so a configuration file
 // written before a setting existed keeps working and still gets sensible
 // behaviour. Viper folds them into the document it unmarshals.
-//
-// They are applied after the document is read, not before: whether the file is
-// nested is exactly what a default would otherwise make impossible to tell,
-// since a default on "…" makes that key look present in every file.
-func applyDefaults(loader *viper.Viper, prefix string) {
+func applyDefaults(loader *viper.Viper) {
 	for key, value := range map[string]any{
 		"observability.log_level":            "info",
 		"observability.log_format":           string(LogFormatAuto),
@@ -190,66 +166,32 @@ func applyDefaults(loader *viper.Viper, prefix string) {
 		"observability.port":                 "2112",
 		"wallet_config.startup_link_timeout": "10s",
 	} {
-		loader.SetDefault(prefix+key, value)
+		loader.SetDefault(key, value)
 	}
 }
 
-// unmarshal projects a loaded document onto Config and validates it.
-//
-// Two layouts are accepted, because the same parser serves two kinds of file:
-//
-//   - Flat, where the document is this node's configuration and nothing else.
-//     That is what a file written for alexandria alone looks like.
-//   - Nested under "ssi_auth", which is how the shared dataspace deployment
-//     file — the one catalog, contracts, transfer and gateway also read — files
-//     this node's section.
-//
-// The layout is inferred from whether the section is present, so neither kind
-// of file needs a marker saying which it is.
+// unmarshal projects the loaded document onto Config and validates it.
 func unmarshal(loader *viper.Viper) (*Config, error) {
-	nested := loader.Get(sectionKey) != nil
+	applyDefaults(loader)
 
-	prefix := ""
-	if nested {
-		prefix = sectionKey + "."
-	}
-
-	applyDefaults(loader, prefix)
+	var cfg Config
 
 	// ErrorUnused is what makes a typo fatal. Viper does not offer strict
 	// decoding of its own, so it is set on the mapstructure decoder underneath:
-	// a key nobody consumed is a key the operator got wrong.
-	strict := func(cfg *mapstructure.DecoderConfig) {
-		cfg.ErrorUnused = true
-	}
-
-	if !nested {
-		var cfg Config
-
-		if err := loader.Unmarshal(&cfg, strict); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
-		}
-
-		if err := cfg.Validate(); err != nil {
-			return nil, err
-		}
-
-		return &cfg, nil
-	}
-
-	// In a shared file the sibling services stay exempt from strict decoding,
-	// because document.Rest consumes them.
-	var doc document
-
-	if err := loader.Unmarshal(&doc, strict); err != nil {
+	// a key nobody consumed is a key the operator got wrong, and a setting
+	// silently left at its default is the worst kind of outage.
+	err := loader.Unmarshal(&cfg, func(decoder *mapstructure.DecoderConfig) {
+		decoder.ErrorUnused = true
+	})
+	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 
-	if err := doc.SSIAuth.Validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
-	return &doc.SSIAuth, nil
+	return &cfg, nil
 }
 
 // Validate checks every section and canonicalises the spellings it accepts.

@@ -10,11 +10,10 @@ import (
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 )
 
-// TestLoadDeployments runs the parser against the real deployment files. They
-// are copied in verbatim, anchors, commented-out blocks and sibling services
-// included: the point is that the operator's file loads unchanged, not that a
-// tidied-up version of it does.
-func TestLoadDeployments(t *testing.T) {
+// TestLoadFixtures runs the parser against the four node configurations, which
+// carry the values of the real eunomia deployments: null endpoints, an optional
+// gRPC transport, an optional admin seed and an optional Gaia-X description.
+func TestLoadFixtures(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]struct {
@@ -28,7 +27,7 @@ func TestLoadDeployments(t *testing.T) {
 		hasGaia   bool
 	}{
 		"consumer": {
-			path:      "testdata/dev.consumer.yaml",
+			path:      "testdata/consumer.yaml",
 			classID:   "Consumer",
 			nodeURL:   "http://127.0.0.1:1100",
 			walletURL: "http://127.0.0.1:7001",
@@ -37,7 +36,7 @@ func TestLoadDeployments(t *testing.T) {
 			hasGaia:   true,
 		},
 		"consumer-dev": {
-			path:      "testdata/dev.consumer-dev.yaml",
+			path:      "testdata/consumer-dev.yaml",
 			classID:   "Consumer",
 			nodeURL:   "http://127.0.0.1:1100",
 			walletURL: "http://127.0.0.1:7001",
@@ -45,7 +44,7 @@ func TestLoadDeployments(t *testing.T) {
 			hasGaia:   true,
 		},
 		"provider": {
-			path:      "testdata/dev.provider.yaml",
+			path:      "testdata/provider.yaml",
 			classID:   "Provider",
 			nodeURL:   "http://127.0.0.1:1200",
 			walletURL: "http://127.0.0.1:7002",
@@ -54,7 +53,7 @@ func TestLoadDeployments(t *testing.T) {
 			hasSeed:   true,
 		},
 		"provider-dev": {
-			path:      "testdata/dev.provider-dev.yaml",
+			path:      "testdata/provider-dev.yaml",
 			classID:   "Provider",
 			nodeURL:   "http://127.0.0.1:1200",
 			walletURL: "http://127.0.0.1:7002",
@@ -133,6 +132,17 @@ func TestLoadDeployments(t *testing.T) {
 			if got := cfg.Gaia != nil; got != tc.hasGaia {
 				t.Errorf("Gaia present = %t, want %t", got, tc.hasGaia)
 			}
+
+			// None of the fixtures carries an observability section, so this
+			// is the defaults landing: a file written before a setting existed
+			// still has to come up with sensible behaviour.
+			if got, want := cfg.Observability.Port, "2112"; got != want {
+				t.Errorf("Observability.Port = %q, want %q", got, want)
+			}
+
+			if got, want := cfg.Wallet.StartupLinkTimeout, 10*time.Second; got != want {
+				t.Errorf("StartupLinkTimeout = %s, want %s", got, want)
+			}
 		})
 	}
 }
@@ -141,7 +151,7 @@ func TestLoadDeployments(t *testing.T) {
 func TestGaiaDetail(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := config.Load("testdata/dev.consumer.yaml")
+	cfg, err := config.Load("testdata/consumer.yaml")
 	if err != nil {
 		t.Fatalf("Load() = %v", err)
 	}
@@ -176,7 +186,7 @@ func TestGaiaDetail(t *testing.T) {
 func TestNullInternalPort(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := config.Load("testdata/dev.provider.yaml")
+	cfg, err := config.Load("testdata/provider.yaml")
 	if err != nil {
 		t.Fatalf("Load() = %v", err)
 	}
@@ -196,27 +206,26 @@ func TestDecodeRejects(t *testing.T) {
 	t.Parallel()
 
 	const base = `
-ssi_auth:
-  common_config:
-    hosts: {http: {protocol: http, url: 127.0.0.1, port: '1100', internal_port: null}, grpc: null, graphql: null}
-    db: {db_type: Postgres, url: 127.0.0.1, port: '1300'}
-    api: {version: v1, openapi_path: ./openapi.json}
-    connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
-  wallet_config:
-    wallet: Fafnir
-    api: {http: {protocol: http, url: 127.0.0.1, port: '7001'}, grpc: null, graphql: null}
-  client_config: {class_id: Consumer, display: null}
-  verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: [DataSpaceParticipant]}
-  gaia_config: null
+common_config:
+  hosts: {http: {protocol: http, url: 127.0.0.1, port: '1100', internal_port: null}, grpc: null, graphql: null}
+  db: {db_type: Postgres, url: 127.0.0.1, port: '1300'}
+  api: {version: v1, openapi_path: ./openapi.json}
+  connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
+wallet_config:
+  wallet: Fafnir
+  api: {http: {protocol: http, url: 127.0.0.1, port: '7001'}, grpc: null, graphql: null}
+client_config: {class_id: Consumer, display: null}
+verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: [DataSpaceParticipant]}
+gaia_config: null
 `
 
 	cases := map[string]string{
-		"unknown key in a modelled section": base + "  nonsense: true\n  did_config: {type: Jwk}\n",
-		"unknown did method":                base + "  did_config: {type: ion}\n",
-		"did:web without a domain":          base + "  did_config: {type: Web}\n",
-		"did:jwk carrying a domain":         base + "  did_config: {type: Jwk, domain: example.org}\n",
+		"unknown key":               base + "nonsense: true\ndid_config: {type: Jwk}\n",
+		"unknown did method":        base + "did_config: {type: ion}\n",
+		"did:web without a domain":  base + "did_config: {type: Web}\n",
+		"did:jwk carrying a domain": base + "did_config: {type: Jwk, domain: example.org}\n",
 		"unsupported wallet": strings.Replace(
-			base+"  did_config: {type: Jwk}\n", "wallet: Fafnir", "wallet: WaltId", 1),
+			base+"did_config: {type: Jwk}\n", "wallet: Fafnir", "wallet: WaltId", 1),
 	}
 
 	for name, doc := range cases {
@@ -230,53 +239,22 @@ ssi_auth:
 	}
 }
 
-// TestSiblingServicesAreIgnored is the counterpart: strict decoding must not
-// turn a service we do not run into a startup failure.
-func TestSiblingServicesAreIgnored(t *testing.T) {
-	t.Parallel()
-
-	const doc = `
-some_anchor: &anchor {whatever: true}
-gateway:
-  common: *anchor
-  a_key_go_has_never_heard_of: 42
-ssi_auth:
-  common_config:
-    hosts: {http: {protocol: http, url: 127.0.0.1, port: '1100'}}
-    db: {db_type: memory}
-    api: {version: v1, openapi_path: ./openapi.json}
-    connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
-  wallet_config:
-    wallet: Fafnir
-    api: {http: {protocol: http, url: 127.0.0.1, port: '7001'}}
-  client_config: {class_id: Consumer, display: null}
-  verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: []}
-  did_config: {type: Jwk}
-  gaia_config: null
-`
-
-	if _, err := config.Decode(strings.NewReader(doc)); err != nil {
-		t.Fatalf("Decode() = %v, want the sibling services to be ignored", err)
-	}
-}
-
 func TestValidateReportsEveryFailure(t *testing.T) {
 	t.Parallel()
 
 	const doc = `
-ssi_auth:
-  common_config:
-    hosts: {http: {protocol: "", url: ""}}
-    db: {db_type: Postgres, url: "", port: '1300'}
-    api: {version: "", openapi_path: ""}
-    connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
-  wallet_config:
-    wallet: Fafnir
-    api: {http: {protocol: http, url: 127.0.0.1, port: '7001'}}
-  client_config: {class_id: Consumer, display: null}
-  verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: []}
-  did_config: {type: Web}
-  gaia_config: null
+common_config:
+  hosts: {http: {protocol: "", url: ""}}
+  db: {db_type: Postgres, url: "", port: '1300'}
+  api: {version: "", openapi_path: ""}
+  connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
+wallet_config:
+  wallet: Fafnir
+  api: {http: {protocol: http, url: 127.0.0.1, port: '7001'}}
+client_config: {class_id: Consumer, display: null}
+verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: []}
+did_config: {type: Web}
+gaia_config: null
 `
 
 	_, err := config.Decode(strings.NewReader(doc))
@@ -321,9 +299,9 @@ func TestDSNEscapesCredentials(t *testing.T) {
 //
 // It does not call t.Parallel: t.Setenv and parallel tests are incompatible.
 func TestEnvOverride(t *testing.T) {
-	t.Setenv("ALEXANDRIA_SSI_AUTH_WALLET_CONFIG_API_HTTP_PORT", "9999")
+	t.Setenv("ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT", "9999")
 
-	cfg, err := config.Load("testdata/dev.consumer.yaml")
+	cfg, err := config.Load("testdata/consumer.yaml")
 	if err != nil {
 		t.Fatalf("Load() = %v", err)
 	}
@@ -335,74 +313,5 @@ func TestEnvOverride(t *testing.T) {
 
 	if want := "http://127.0.0.1:9999"; got != want {
 		t.Errorf("Wallet.APIURL() = %q, want %q", got, want)
-	}
-}
-
-// TestFlatDocument covers a file written for this node alone, with no
-// ssi_auth wrapper: the same sections, at the root of the document.
-func TestFlatDocument(t *testing.T) {
-	t.Parallel()
-
-	const doc = `
-common_config:
-  hosts: {http: {protocol: http, url: 127.0.0.1, port: '1200', internal_port: null}, grpc: null, graphql: null}
-  db: {db_type: Postgres, url: 127.0.0.1, port: '1400'}
-  api: {version: v1, openapi_path: ./openapi.json}
-  connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
-wallet_config:
-  wallet: Fafnir
-  api: {http: {protocol: http, url: 127.0.0.1, port: '7002'}, grpc: null, graphql: null}
-client_config: {class_id: Provider, display: null}
-verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: [DataSpaceParticipant]}
-did_config: {type: Jwk}
-gaia_config: null
-`
-
-	cfg, err := config.Decode(strings.NewReader(doc))
-	if err != nil {
-		t.Fatalf("Decode() = %v", err)
-	}
-
-	if got, want := cfg.Common.Hosts.HTTP.URL(), "http://127.0.0.1:1200"; got != want {
-		t.Errorf("node URL = %q, want %q", got, want)
-	}
-
-	if got, want := cfg.Client.ClassID, "Provider"; got != want {
-		t.Errorf("Client.ClassID = %q, want %q", got, want)
-	}
-
-	// The defaults have to land on the flat layout too, not only the nested one.
-	if got, want := cfg.Observability.Port, "2112"; got != want {
-		t.Errorf("Observability.Port = %q, want %q", got, want)
-	}
-
-	if got, want := cfg.Wallet.StartupLinkTimeout, 10*time.Second; got != want {
-		t.Errorf("StartupLinkTimeout = %s, want %s", got, want)
-	}
-}
-
-// TestFlatDocumentStaysStrict: without a sibling service to excuse it, an
-// unknown key at the root of a flat file is a typo and must be fatal.
-func TestFlatDocumentStaysStrict(t *testing.T) {
-	t.Parallel()
-
-	const doc = `
-common_config:
-  hosts: {http: {protocol: http, url: 127.0.0.1, port: '1200'}}
-  db: {db_type: memory}
-  api: {version: v1, openapi_path: ./openapi.json}
-  connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
-wallet_config:
-  wallet: Fafnir
-  api: {http: {protocol: http, url: 127.0.0.1, port: '7002'}}
-client_config: {class_id: Provider, display: null}
-verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: []}
-did_config: {type: Jwk}
-gaia_config: null
-walet_config: {typo: true}
-`
-
-	if _, err := config.Decode(strings.NewReader(doc)); err == nil {
-		t.Fatal("Decode() accepted an unknown root key, want an error")
 	}
 }

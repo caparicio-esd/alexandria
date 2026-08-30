@@ -1,0 +1,63 @@
+# Derived from the shared eunomia deployment file: the same values for this
+# node, with the ssi_auth wrapper dropped and the YAML aliases expanded.
+
+common_config:
+  hosts:
+    http:
+      protocol: http
+      url: 127.0.0.1
+      port: '1100'
+      internal_port: null
+    grpc: null
+    graphql: null
+  db:
+    db_type: Postgres
+    url: 127.0.0.1
+    port: '1300'
+  api:
+    version: v1
+    openapi_path: ./../../static/specs/openapi/merged_openapi.json
+  connection:
+    is_local: true
+    is_prod: false
+    is_vault_real: false
+    has_tls_proxy: false
+wallet_config:
+  wallet: Fafnir
+  api:
+    http:
+      protocol: http
+      url: 127.0.0.1
+      port: '7001'
+    grpc: null
+    graphql: null
+client_config:
+  class_id: Consumer
+  display: null
+verify_req_config:
+  is_cert_allowed: false
+  auto_approve_cert: false
+  vcs_requested:
+  - DataSpaceParticipant
+did_config:
+  type: Jwk
+gaia_config:
+  legal_person:
+    name: EunomiaConsumer
+    description: Consumer node for the Eunomia dataspace demo
+    registration_number:
+      kind: VatId
+      value: VATES-123456789
+      country_code: ES
+    legal_address:
+      country_code: ES
+      country_name: Spain
+      locality: Madrid
+      postal_code: '28040'
+      street_address: Av. Complutense, 30, Moncloa - Aravaca
+    headquarters_address:
+      country_code: ES
+      country_name: Spain
+      locality: Madrid
+      postal_code: '28040'
+      street_address: Av. Complutense, 30, Moncloa - Aravaca
