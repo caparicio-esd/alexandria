@@ -73,6 +73,15 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 
 	defer shutdownMetrics(ctx, metrics, logger)
 
+	database, err := openDatabase(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+
+	if database != nil {
+		defer database.Close()
+	}
+
 	walletService, closeWallet, err := buildWallet(cfg, logger)
 	if err != nil {
 		return err
@@ -82,6 +91,10 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 
 	health := observability.NewHealth()
 	health.Register("wallet", walletCheck(walletService))
+
+	if database != nil {
+		health.Register("database", database.Check)
+	}
 
 	// The background linker gets a context of its own so run can shut it down
 	// and wait for it, whichever way it returns. A goroutine that outlives the

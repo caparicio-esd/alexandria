@@ -40,6 +40,30 @@ tasks:
     desc: Hot reload with air.
     cmds: ["go tool air"]
 
+  db:up:
+    desc: Start the local Postgres and wait for it to accept connections.
+    cmds: ["docker compose up -d --wait postgres"]
+
+  db:down:
+    desc: Stop the local Postgres, keeping its data.
+    cmds: ["docker compose down"]
+
+  db:reset:
+    desc: Destroy the local Postgres and its data, then start it again.
+    prompt: This deletes the local database volume. Continue?
+    cmds:
+      - docker compose down -v
+      - task: db:up
+
+  db:psql:
+    desc: Open a psql shell on the local Postgres.
+    dotenv: [".env"]
+    cmds: ["docker compose exec postgres psql -U $ALEXANDRIA_DB_USER -d $ALEXANDRIA_DB_NAME"]
+
+  db:logs:
+    desc: Follow the local Postgres logs.
+    cmds: ["docker compose logs -f postgres"]
+
   tidy:
     desc: Sync go.mod and go.sum.
     cmds: ["go mod tidy"]

@@ -135,6 +135,8 @@ const (
 	ModuleConfig = "config"
 	// ModuleCommon is internal/common, the shared helpers.
 	ModuleCommon = "common"
+	// ModuleStorage is internal/storage, the shared persistence infrastructure.
+	ModuleStorage = "storage"
 	// ModuleObservability is internal/observability, this package.
 	ModuleObservability = "observability"
 	// ModuleMain is the composition root.

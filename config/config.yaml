@@ -29,7 +29,7 @@ common_config:
   db:
     db_type: Postgres
     url: "127.0.0.1"
-    port: "1400"
+    port: "1500"
   api:
     version: "v1"
     openapi_path: "./static/specs/openapi/merged_openapi.json"

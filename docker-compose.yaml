@@ -1,0 +1,33 @@
+# Local infrastructure. The node itself runs on the host, with `task dev`.
+#
+# Credentials come from .env, which is not committed — copy .env.example. They
+# are the same variables the node reads, so both halves of the connection are
+# configured in one place and cannot drift apart.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: alexandria-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${ALEXANDRIA_DB_USER:?set it in .env}
+      POSTGRES_PASSWORD: ${ALEXANDRIA_DB_PASSWORD:?set it in .env}
+      POSTGRES_DB: ${ALEXANDRIA_DB_NAME:?set it in .env}
+    ports:
+      # Matches common_config.db.port in config/config.yaml. Non-standard on
+      # purpose: alexandria owns this database, and the port has to stay clear
+      # of the eunomia containers already on 1300, 1400 and 1450.
+      - "127.0.0.1:1500:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # $$ escapes the substitution: these are the container's variables, not
+      # compose's.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres-data:

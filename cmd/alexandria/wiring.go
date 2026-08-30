@@ -14,6 +14,7 @@ import (
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/fafnir"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/rest"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
+	"github.com/caparicio-esd/alexandria/internal/storage/postgres"
 	"github.com/gin-gonic/gin"
 )
 
@@ -66,6 +67,33 @@ func buildWallet(cfg *config.Config, logger *slog.Logger) (*wallet.Service, func
 		observability.Scoped(logger, observability.ModuleSSIAuth, "wallet"))
 
 	return service, func() { _ = adapter.Close() }, nil
+}
+
+// openDatabase builds the connection pool, or returns nil when this deployment
+// runs without a database.
+//
+// The credentials come from the environment rather than the document, so a
+// misconfigured deployment fails here, naming every variable it is missing,
+// instead of failing on the first query.
+func openDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*postgres.Pool, error) {
+	if !cfg.Common.DB.IsPostgres() {
+		logger.InfoContext(ctx, "running without a database", "driver", cfg.Common.DB.Driver)
+
+		return nil, nil //nolint:nilnil // no database is a valid deployment, not a failure
+	}
+
+	secrets, err := config.SecretsFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("reading database credentials: %w", err)
+	}
+
+	pool, err := postgres.Open(ctx, cfg.Common.DB, secrets,
+		observability.Scoped(logger, observability.ModuleStorage, "postgres"))
+	if err != nil {
+		return nil, fmt.Errorf("opening the database: %w", err)
+	}
+
+	return pool, nil
 }
 
 // walletCheck is the readiness check for the wallet: the node can serve once it

@@ -10,16 +10,28 @@ work comes next, as a second bounded context alongside it.
 ## Requirements
 
 - Go 1.26 or later
+- Docker, for the local Postgres
 - [Task](https://taskfile.dev) (optional, for the shortcuts)
 - A Fafnir wallet reachable over HTTP
 
 ## Usage
 
 ```bash
+cp .env.example .env   # database credentials, never committed
+task db:up             # start the local Postgres and wait for it
+task dev               # hot reload with air
+```
+
+```bash
 task run            # run the application
-task dev            # hot reload with air
 task build          # build the binary into bin/alexandria
 task check          # format + lint + tests
+
+task db:up          # start Postgres, waiting until it accepts connections
+task db:down        # stop it, keeping the data
+task db:reset       # destroy the volume and start over
+task db:psql        # a psql shell on it
+task db:logs        # follow its logs
 ```
 
 Without Task:
@@ -66,6 +78,42 @@ time, from the environment and from Vault, so the document stays safe to commit.
 The one exception is `common_config.admin_seed`, which provisions the first
 tenant on an empty database and carries a password — a file that sets it is a
 development file.
+
+The database credentials come from three variables, which both the node and
+`docker compose` read from `.env`, so the two halves of the connection cannot
+drift apart:
+
+```
+ALEXANDRIA_DB_USER
+ALEXANDRIA_DB_PASSWORD
+ALEXANDRIA_DB_NAME
+```
+
+All three missing are reported at once, by name, rather than one restart at a
+time.
+
+## Database
+
+`docker-compose.yaml` runs a Postgres for local development, on `127.0.0.1:1500`
+to stay clear of anything else already bound. `common_config.db` points at it,
+and `max_conns` and `conn_max_lifetime` bound the pool — an unbounded pool is
+how a traffic burst turns into "too many clients already" for everything else
+sharing the server.
+
+The pool is lazy and self-healing: pgx dials on first use and reconnects on its
+own, so a database that is down at boot is not a reason to refuse to start. The
+node logs a warning, comes up, fails readiness, and clears it by itself once the
+server is back — no restart.
+
+```console
+$ task db:down && task dev
+WARN  database unreachable at boot; the pool will keep retrying
+$ curl -s localhost:1200/readyz | jq -c '.checks.database'
+{"status":"failing","error":"database unreachable: ... connection refused"}
+$ task db:up
+$ curl -s localhost:1200/readyz | jq -c '.checks.database'
+{"status":"ok"}
+```
 
 ## Endpoints
 
@@ -138,6 +186,7 @@ cmd/alexandria/            Composition root. Wiring only, no business logic.
 internal/config/           Deployment document loader.
 internal/httpapi/          Process-wide HTTP boundary: the health probes.
 internal/observability/    Logging, metrics, health registry, internal listener.
+internal/storage/          Persistence infrastructure: the Postgres pool.
 internal/ssi-auth/         The identity bounded context:
   wallet/                    domain, entities and ports — imports no framework
   fafnir/                    driven adapter, the external wallet over HTTP
