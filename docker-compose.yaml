@@ -1,8 +1,8 @@
 # Local infrastructure. The node itself runs on the host, with `task dev`.
 #
-# Credentials come from .env, which is not committed — copy .env.example. They
-# are the same variables the node reads, so both halves of the connection are
-# configured in one place and cannot drift apart.
+# The credentials mirror common_config.db in config/config.yaml, which is where
+# the node reads them from. They are development values in a committed file on
+# both sides; a real deployment renders its own.
 
 services:
   postgres:
@@ -10,9 +10,11 @@ services:
     container_name: alexandria-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${ALEXANDRIA_DB_USER:?set it in .env}
-      POSTGRES_PASSWORD: ${ALEXANDRIA_DB_PASSWORD:?set it in .env}
-      POSTGRES_DB: ${ALEXANDRIA_DB_NAME:?set it in .env}
+      # Overridable, so a second checkout can run its own without editing the
+      # file, but the defaults are what config/config.yaml expects.
+      POSTGRES_USER: ${ALEXANDRIA_DB_USER:-alexandria}
+      POSTGRES_PASSWORD: ${ALEXANDRIA_DB_PASSWORD:-alexandria}
+      POSTGRES_DB: ${ALEXANDRIA_DB_NAME:-alexandria}
     ports:
       # Matches common_config.db.port in config/config.yaml. Non-standard on
       # purpose: alexandria owns this database, and the port has to stay clear

@@ -1,49 +1,97 @@
 package config_test
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/caparicio-esd/alexandria/internal/config"
 )
 
-func TestSecretsFromEnv(t *testing.T) {
-	t.Setenv(config.EnvDBUser, "alexandria")
-	t.Setenv(config.EnvDBPassword, "p@ss/word")
-	t.Setenv(config.EnvDBName, "alexandria")
+// TestDSNEscapesCredentials: a password with an "@" in it must not be able to
+// move the host.
+func TestDSNEscapesCredentials(t *testing.T) {
+	t.Parallel()
 
-	secrets, err := config.SecretsFromEnv()
-	if err != nil {
-		t.Fatalf("SecretsFromEnv() = %v", err)
+	db := config.Database{
+		Driver:   config.DriverPostgres,
+		Host:     "127.0.0.1",
+		Port:     "1500",
+		User:     "alexandria",
+		Password: "p@ss/word",
+		Name:     "alexandria",
 	}
 
-	if secrets.Password != "p@ss/word" {
-		t.Errorf("Password = %q, want the raw value", secrets.Password)
+	got := db.DSN()
+	want := "postgres://alexandria:p%40ss%2Fword@127.0.0.1:1500/alexandria"
+
+	if got != want {
+		t.Errorf("DSN() = %q, want %q", got, want)
 	}
 }
 
-// TestSecretsFromEnvNamesEveryMissingVariable: an operator setting up a
-// deployment would rather see the three that are absent than discover them one
-// restart at a time.
-func TestSecretsFromEnvNamesEveryMissingVariable(t *testing.T) {
-	t.Setenv(config.EnvDBUser, "")
-	t.Setenv(config.EnvDBPassword, "")
-	t.Setenv(config.EnvDBName, "")
+// TestRedactedHidesThePassword: a connection string in a log line is a password
+// in a log aggregator, read by more people than the database ever was.
+func TestRedactedHidesThePassword(t *testing.T) {
+	t.Parallel()
 
-	_, err := config.SecretsFromEnv()
+	db := config.Database{
+		Driver:   config.DriverPostgres,
+		Host:     "127.0.0.1",
+		Port:     "1500",
+		User:     "alexandria",
+		Password: "hunter2",
+		Name:     "alexandria",
+	}
+
+	if got := db.Redacted(); strings.Contains(got, "hunter2") {
+		t.Errorf("Redacted() = %q, want the password gone", got)
+	}
+
+	if got := db.Redacted(); !strings.Contains(got, "alexandria@127.0.0.1:1500") {
+		t.Errorf("Redacted() = %q, want it to still name the server", got)
+	}
+}
+
+// TestPostgresNeedsCredentials: a driver that authenticates must say as whom.
+// The password is not required — a server set up for trust or peer
+// authentication takes none, and demanding one would make that deployment
+// impossible to express.
+func TestPostgresNeedsCredentials(t *testing.T) {
+	t.Parallel()
+
+	doc := func(db string) string {
+		return `
+common_config:
+  hosts: {http: {protocol: http, url: 127.0.0.1, port: '1200'}}
+  db: ` + db + `
+  api: {version: v1, openapi_path: ./openapi.json}
+  connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
+wallet_config:
+  wallet: Fafnir
+  api: {http: {protocol: http, url: 127.0.0.1, port: '7002'}}
+client_config: {class_id: Provider, display: null}
+verify_req_config: {is_cert_allowed: false, auto_approve_cert: false, vcs_requested: []}
+did_config: {type: Jwk}
+gaia_config: null
+`
+	}
+
+	_, err := config.Decode(strings.NewReader(doc("{db_type: Postgres, url: 127.0.0.1, port: '1500'}")))
 	if err == nil {
-		t.Fatal("SecretsFromEnv() succeeded with nothing set, want an error")
+		t.Fatal("Decode() accepted postgres with no credentials, want an error")
 	}
 
-	if !errors.Is(err, config.ErrInvalid) {
-		t.Errorf("error does not wrap ErrInvalid: %v", err)
-	}
-
-	for _, want := range []string{config.EnvDBUser, config.EnvDBPassword, config.EnvDBName} {
+	for _, want := range []string{"common_config.db.user", "common_config.db.name"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error does not mention %q: %v", want, err)
+			t.Errorf("error does not mention %q:\n%v", want, err)
 		}
+	}
+
+	// No password is legitimate; no user is not.
+	const trustAuth = "{db_type: Postgres, url: 127.0.0.1, port: '1500', user: alexandria, name: alexandria}"
+
+	if _, err := config.Decode(strings.NewReader(doc(trustAuth))); err != nil {
+		t.Errorf("Decode() rejected a passwordless deployment: %v", err)
 	}
 }
 
@@ -55,7 +103,7 @@ func TestPoolDefaults(t *testing.T) {
 	const doc = `
 common_config:
   hosts: {http: {protocol: http, url: 127.0.0.1, port: '1200'}}
-  db: {db_type: Postgres, url: 127.0.0.1, port: '1400'}
+  db: {db_type: Postgres, url: 127.0.0.1, port: '1500', user: alexandria, password: alexandria, name: alexandria}
   api: {version: v1, openapi_path: ./openapi.json}
   connection: {is_local: true, is_prod: false, is_vault_real: false, has_tls_proxy: false}
 wallet_config:

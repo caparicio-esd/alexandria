@@ -30,6 +30,14 @@ common_config:
     db_type: Postgres
     url: "127.0.0.1"
     port: "1500"
+    # Development credentials, and nothing more: this file is committed. A
+    # deployment renders its own — with Helm, or by mounting one into the
+    # container — so the production password is generated there and never
+    # exists in the repository. Any of these can also be overridden from the
+    # environment: ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD.
+    user: "alexandria"
+    password: "alexandria"
+    name: "alexandria"
   api:
     version: "v1"
     openapi_path: "./static/specs/openapi/merged_openapi.json"
@@ -52,20 +60,23 @@ wallet_config:
   # anyway and reports itself not ready, while it keeps retrying.
   startup_link_timeout: "10s"
 
-# Everything here has a default, so an older deployment file still works.
 observability:
   log_level: "info" # debug | info | warn | error
   log_format: "auto" # auto (text on a terminal, JSON otherwise) | text | json
   metrics: true # /metrics on the internal port below
   pprof: false # /debug/pprof, off by default: a heap dump says a lot
   port: "2112" # internal listener; empty switches it off
+
 client_config:
   class_id: "Provider"
   display: null
+
 verify_req_config:
   is_cert_allowed: false
   auto_approve_cert: false
   vcs_requested: [DataSpaceParticipant]
+
 did_config:
   type: Jwk
+
 gaia_config: null

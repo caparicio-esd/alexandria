@@ -13,6 +13,9 @@ common_config:
   db:
     db_type: Postgres
     url: 127.0.0.1
+    user: consumer
+    password: consumer-secret
+    name: consumer
     port: '1300'
   api:
     version: v1

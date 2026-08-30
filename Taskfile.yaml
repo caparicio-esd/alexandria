@@ -57,8 +57,7 @@ tasks:
 
   db:psql:
     desc: Open a psql shell on the local Postgres.
-    dotenv: [".env"]
-    cmds: ["docker compose exec postgres psql -U $ALEXANDRIA_DB_USER -d $ALEXANDRIA_DB_NAME"]
+    cmds: ['docker compose exec postgres sh -c ''psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
 
   db:logs:
     desc: Follow the local Postgres logs.

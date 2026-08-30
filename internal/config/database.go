@@ -1,11 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
-	"os"
-	"sort"
 	"strings"
 	"time"
 )
@@ -26,11 +25,27 @@ const (
 	DriverMemory Driver = "memory"
 )
 
-// Database locates the store. It carries no credentials: those arrive at run
-// time from the environment or Vault, so this file never holds a password.
+// Database locates the store and says how to authenticate against it.
+//
+// The credentials live in the document rather than in a secret store. That is a
+// deliberate trade: a deployment renders this file — with Helm, or by mounting
+// it into a container — so the password that reaches production is generated
+// there and never exists in the repository. The file committed here is a
+// development file, and what it holds is a development password.
+//
+// Any of these can still be overridden from the environment, which is the
+// escape hatch when a deployment would rather inject the password than render
+// it: ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD.
 type Database struct {
 	// Driver is the backend to speak to.
 	Driver Driver `mapstructure:"db_type"`
+	// User is the role to connect as.
+	User string `mapstructure:"user,omitempty"`
+	// Password authenticates the role. It may be empty where the server is
+	// configured for trust or peer authentication.
+	Password string `mapstructure:"password,omitempty"`
+	// Name is the database to open.
+	Name string `mapstructure:"name,omitempty"`
 	// Host is the address of the server. Ignored by the memory backend.
 	Host string `mapstructure:"url,omitempty"`
 	// Port is the port of the server. Ignored by the memory backend.
@@ -55,57 +70,6 @@ const (
 	defaultConnMaxLifetime = time.Hour
 )
 
-// Secrets are the credential halves of a connection string, resolved at run
-// time and never read from the configuration file.
-type Secrets struct {
-	User     string
-	Password string
-	Name     string
-}
-
-// The environment variables carrying the database credentials. They are not
-// configuration keys: a password in the document would be a password in the
-// repository.
-const (
-	EnvDBUser     = EnvPrefix + "_DB_USER"
-	EnvDBPassword = EnvPrefix + "_DB_PASSWORD"
-	EnvDBName     = EnvPrefix + "_DB_NAME"
-)
-
-// SecretsFromEnv reads the database credentials from the environment.
-//
-// Every missing variable is named at once: an operator setting up a deployment
-// would rather see the three that are absent than discover them one restart at
-// a time.
-func SecretsFromEnv() (Secrets, error) {
-	secrets := Secrets{
-		User:     os.Getenv(EnvDBUser),
-		Password: os.Getenv(EnvDBPassword),
-		Name:     os.Getenv(EnvDBName),
-	}
-
-	missing := make([]string, 0, 3)
-
-	for name, value := range map[string]string{
-		EnvDBUser:     secrets.User,
-		EnvDBPassword: secrets.Password,
-		EnvDBName:     secrets.Name,
-	} {
-		if value == "" {
-			missing = append(missing, name)
-		}
-	}
-
-	if len(missing) > 0 {
-		sort.Strings(missing)
-
-		return Secrets{}, fmt.Errorf("%w: database credentials: %s must be set",
-			ErrInvalid, strings.Join(missing, ", "))
-	}
-
-	return secrets, nil
-}
-
 // Validate implements the section contract, and canonicalises the driver name:
 // the deployment file spells it "Postgres", the constants are lowercase.
 //
@@ -126,11 +90,24 @@ func (d *Database) Validate() error {
 	case DriverMemory:
 		return nil
 	case DriverPostgres, DriverMySQL, DriverSQLite, DriverMongo:
+		var errs []error
+
 		if d.Host == "" {
-			return invalid("common_config.db.url", "must be set for driver "+string(d.Driver))
+			errs = append(errs, invalid("common_config.db.url", "must be set for driver "+string(d.Driver)))
 		}
 
-		return nil
+		// The password is not required: a server configured for trust or peer
+		// authentication takes none, and demanding one would make that
+		// deployment impossible to express.
+		if d.User == "" {
+			errs = append(errs, invalid("common_config.db.user", "must be set"))
+		}
+
+		if d.Name == "" {
+			errs = append(errs, invalid("common_config.db.name", "must be set"))
+		}
+
+		return errors.Join(errs...)
 	default:
 		return invalid("common_config.db.db_type", fmt.Sprintf("unknown driver %q", d.Driver))
 	}
@@ -141,16 +118,35 @@ func (d *Database) Validate() error {
 // It is built through net/url rather than by formatting a string, so a password
 // containing "@", "/" or ":" is percent-encoded instead of silently producing a
 // DSN that points somewhere else.
-func (d Database) DSN(secrets Secrets) string {
+func (d Database) DSN() string {
 	if d.Driver == DriverMemory {
 		return ":memory:"
 	}
 
 	dsn := url.URL{
 		Scheme: string(d.Driver),
-		User:   url.UserPassword(secrets.User, secrets.Password),
+		User:   url.UserPassword(d.User, d.Password),
 		Host:   net.JoinHostPort(d.Host, d.Port),
-		Path:   "/" + secrets.Name,
+		Path:   "/" + d.Name,
+	}
+
+	return dsn.String()
+}
+
+// Redacted is the DSN with the password replaced, for logs and error messages.
+//
+// Nothing should ever print DSN itself: a connection string in a log line is a
+// password in a log aggregator, read by more people than the database ever was.
+func (d Database) Redacted() string {
+	if d.Driver == DriverMemory {
+		return ":memory:"
+	}
+
+	dsn := url.URL{
+		Scheme: string(d.Driver),
+		User:   url.User(d.User),
+		Host:   net.JoinHostPort(d.Host, d.Port),
+		Path:   "/" + d.Name,
 	}
 
 	return dsn.String()

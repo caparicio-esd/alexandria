@@ -1,5 +1,15 @@
-// Wiring: the constructors that turn configuration into running
-// components. Each one takes the values it needs, never the whole Config.
+// Wiring: the constructors that turn configuration into running components.
+//
+// Every one of them takes the whole *config.Config and picks out what it needs.
+// Configuration goes in, a configured component comes out. That uniformity is
+// worth more here than minimal parameters: adding a setting to a component
+// stops being a change to its call site, and a reader can tell at a glance
+// which functions are wiring and which are not.
+//
+// The rule stops at this package. Config is the composition root's input, and
+// it does not travel past it: the constructors under internal/ take the values
+// they were given, so no service can reach for a setting it did not declare a
+// dependency on, and none of them has to import the deployment format.
 
 package main
 
@@ -71,10 +81,6 @@ func buildWallet(cfg *config.Config, logger *slog.Logger) (*wallet.Service, func
 
 // openDatabase builds the connection pool, or returns nil when this deployment
 // runs without a database.
-//
-// The credentials come from the environment rather than the document, so a
-// misconfigured deployment fails here, naming every variable it is missing,
-// instead of failing on the first query.
 func openDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*postgres.Pool, error) {
 	if !cfg.Common.DB.IsPostgres() {
 		logger.InfoContext(ctx, "running without a database", "driver", cfg.Common.DB.Driver)
@@ -82,18 +88,24 @@ func openDatabase(ctx context.Context, cfg *config.Config, logger *slog.Logger) 
 		return nil, nil //nolint:nilnil // no database is a valid deployment, not a failure
 	}
 
-	secrets, err := config.SecretsFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("reading database credentials: %w", err)
-	}
-
-	pool, err := postgres.Open(ctx, cfg.Common.DB, secrets,
+	pool, err := postgres.Open(ctx, cfg.Common.DB,
 		observability.Scoped(logger, observability.ModuleStorage, "postgres"))
 	if err != nil {
 		return nil, fmt.Errorf("opening the database: %w", err)
 	}
 
 	return pool, nil
+}
+
+// buildInternalServer wires the diagnostics listener, or returns nil when the
+// configuration switches it off.
+func buildInternalServer(
+	cfg *config.Config,
+	metrics *observability.Metrics,
+	logger *slog.Logger,
+) *observability.InternalServer {
+	return observability.NewInternalServer(cfg.Observability, metrics,
+		observability.Scoped(logger, observability.ModuleObservability, "internal"))
 }
 
 // walletCheck is the readiness check for the wallet: the node can serve once it

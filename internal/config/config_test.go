@@ -280,20 +280,6 @@ gaia_config: null
 	}
 }
 
-func TestDSNEscapesCredentials(t *testing.T) {
-	t.Parallel()
-
-	db := config.Database{Driver: config.DriverPostgres, Host: "127.0.0.1", Port: "1300"}
-
-	// A password with an "@" in it must not be able to move the host.
-	got := db.DSN(config.Secrets{User: "alexandria", Password: "p@ss/word", Name: "alexandria"})
-	want := "postgres://alexandria:p%40ss%2Fword@127.0.0.1:1300/alexandria"
-
-	if got != want {
-		t.Errorf("DSN() = %q, want %q", got, want)
-	}
-}
-
 // TestEnvOverride covers the reason Viper is here at all: an operator can point
 // a container at a different wallet without editing the deployment file.
 //

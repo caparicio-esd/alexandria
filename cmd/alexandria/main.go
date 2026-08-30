@@ -107,15 +107,14 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 
 	defer background.Wait()
 
-	linkWallet(linkCtx, &background, walletService, cfg.Wallet.StartupLinkTimeout, out, logger)
+	linkWallet(linkCtx, &background, cfg, walletService, out, logger)
 
 	engine, err := buildEngine(cfg, health, walletService, metrics, root)
 	if err != nil {
 		return err
 	}
 
-	internal := observability.NewInternalServer(cfg.Observability, metrics,
-		observability.Scoped(root, observability.ModuleObservability, "internal"))
+	internal := buildInternalServer(cfg, metrics, root)
 	internal.Start()
 
 	if addr := internal.Addr(); addr != "" {

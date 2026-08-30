@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/caparicio-esd/alexandria/internal/config"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 )
 
@@ -31,11 +32,13 @@ const (
 func linkWallet(
 	ctx context.Context,
 	background *sync.WaitGroup,
+	cfg *config.Config,
 	holder *wallet.Service,
-	budget time.Duration,
 	out *report,
 	logger *slog.Logger,
 ) {
+	budget := cfg.Wallet.StartupLinkTimeout
+
 	notify := func(attempt int, backoff time.Duration, err error) {
 		if reportErr := out.waiting(attempt, backoff.String(), err.Error()); reportErr != nil {
 			logger.WarnContext(ctx, "wallet not ready", "attempt", attempt, "err", err)

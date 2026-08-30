@@ -41,8 +41,8 @@ type Pool struct {
 // start. Open therefore reports an unreachable server rather than failing —
 // readiness is where that belongs, and a pool that reconnects will clear it
 // without a restart.
-func Open(ctx context.Context, cfg config.Database, secrets config.Secrets, logger *slog.Logger) (*Pool, error) {
-	poolConfig, err := pgxpool.ParseConfig(cfg.DSN(secrets))
+func Open(ctx context.Context, cfg config.Database, logger *slog.Logger) (*Pool, error) {
+	poolConfig, err := pgxpool.ParseConfig(cfg.DSN())
 	if err != nil {
 		// The DSN is assembled from validated configuration, so this is a bug
 		// in the assembly rather than operator error.
@@ -63,14 +63,16 @@ func Open(ctx context.Context, cfg config.Database, secrets config.Secrets, logg
 	defer cancel()
 
 	if err := wrapped.Check(pingCtx); err != nil {
+		// Redacted, never DSN: a connection string in a log line is a password
+		// in a log aggregator.
 		logger.WarnContext(ctx, "database unreachable at boot; the pool will keep retrying",
-			"host", cfg.Host, "port", cfg.Port, "err", err)
+			"dsn", cfg.Redacted(), "err", err)
 
 		return wrapped, nil
 	}
 
 	logger.InfoContext(ctx, "database connected",
-		"host", cfg.Host, "port", cfg.Port, "max_conns", cfg.MaxConns)
+		"dsn", cfg.Redacted(), "max_conns", cfg.MaxConns)
 
 	return wrapped, nil
 }

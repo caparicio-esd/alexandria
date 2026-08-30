@@ -17,9 +17,8 @@ work comes next, as a second bounded context alongside it.
 ## Usage
 
 ```bash
-cp .env.example .env   # database credentials, never committed
-task db:up             # start the local Postgres and wait for it
-task dev               # hot reload with air
+task db:up          # start the local Postgres and wait for it
+task dev            # hot reload with air
 ```
 
 ```bash
@@ -71,31 +70,33 @@ A key that appears in neither the file nor the defaults cannot be introduced by
 the environment alone: the override applies to what the configuration already
 declares.
 
-### Secrets
+### Credentials
 
-The file carries none. Database credentials and key material are resolved at run
-time, from the environment and from Vault, so the document stays safe to commit.
-The one exception is `common_config.admin_seed`, which provisions the first
-tenant on an empty database and carries a password — a file that sets it is a
-development file.
+The document holds them: `common_config.db` carries the user, password and
+database name, and `common_config.admin_seed` the first tenant. That is a
+deliberate trade. A deployment renders its own file — with Helm, or by mounting
+one into the container — so the password that reaches production is generated
+there and never exists in the repository.
 
-The database credentials come from three variables, which both the node and
-`docker compose` read from `.env`, so the two halves of the connection cannot
-drift apart:
+**The file in this repository is committed, so what it holds is a development
+password and nothing else.** Where a deployment would rather inject a secret
+than render it, the environment override is the escape hatch:
 
-```
-ALEXANDRIA_DB_USER
-ALEXANDRIA_DB_PASSWORD
-ALEXANDRIA_DB_NAME
+```bash
+ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD=... alexandria
 ```
 
-All three missing are reported at once, by name, rather than one restart at a
-time.
+Key material is separate and still comes from Vault at run time.
+
+Nothing prints a connection string: the pool logs `db.Redacted()`, because a DSN
+in a log line is a password in a log aggregator, read by more people than the
+database ever was.
 
 ## Database
 
 `docker-compose.yaml` runs a Postgres for local development, on `127.0.0.1:1500`
-to stay clear of anything else already bound. `common_config.db` points at it,
+to stay clear of anything else already bound. Its credentials mirror
+`common_config.db`, which is where the node reads them from, and
 and `max_conns` and `conn_max_lifetime` bound the pool — an unbounded pool is
 how a traffic burst turns into "too many clients already" for everything else
 sharing the server.
