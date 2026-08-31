@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# Keeps secp256k1 compiled in for every go command in this workflow; see the
+# Taskfile for why.
+env:
+  GOFLAGS: -tags=jwx_es256k
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

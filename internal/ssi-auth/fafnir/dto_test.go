@@ -159,3 +159,74 @@ func TestNormalizeDidDocumentIsNeeded(t *testing.T) {
 		t.Fatal("the raw Fafnir document now validates: drop normalize.go and this test")
 	}
 }
+
+// TestKeyRespToDomain covers the key half of the anti-corruption boundary: the
+// JWA spellings are checked here so the domain can hold them as plain strings.
+func TestKeyRespToDomain(t *testing.T) {
+	t.Parallel()
+
+	ed25519 := "Ed25519"
+	p256 := "p256"
+
+	cases := map[string]struct {
+		in      keyResp
+		wantErr bool
+	}{
+		"ed25519":          {keyResp{ID: "a.json", Alias: "base", Kty: "OKP", Crv: &ed25519}, false},
+		"rsa no crv":       {keyResp{ID: "private_key.json.example", Alias: "base", Kty: "RSA"}, false},
+		"no id":            {keyResp{Kty: "OKP", Crv: &ed25519}, true},
+		"bad kty":          {keyResp{ID: "a.json", Kty: "octet"}, true},
+		"non-registry crv": {keyResp{ID: "a.json", Kty: "EC", Crv: &p256}, true},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.in.ToDomain()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ToDomain() = %+v, want an error", got)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ToDomain(): %v", err)
+			}
+
+			if got.ID != tc.in.ID || got.Alias != tc.in.Alias || got.Kty != tc.in.Kty {
+				t.Errorf("ToDomain() = %+v, want it to carry %+v", got, tc.in)
+			}
+		})
+	}
+}
+
+// TestNewKeyReqSpellsFafnirFields pins the request field names. Fafnir answers
+// anything it cannot deserialise with a flat "Error extracting Json payload",
+// so a renamed field surfaces as a 400 with no clue in it.
+func TestNewKeyReqSpellsFafnirFields(t *testing.T) {
+	t.Parallel()
+
+	raw, err := json.Marshal(newKeyReq(wallet.KeyPlan{ID: "a.json", Alias: "base", Pem: "pem"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var got map[string]string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	want := map[string]string{"id": "a.json", "alias": "base", "pem": "pem"}
+	if len(got) != len(want) {
+		t.Fatalf("body = %v, want exactly %v", got, want)
+	}
+
+	for field, value := range want {
+		if got[field] != value {
+			t.Errorf("body[%q] = %q, want %q", field, got[field], value)
+		}
+	}
+}

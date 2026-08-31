@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/main ./cmd/alexandria"
+  cmd = "go build -tags=jwx_es256k -o ./tmp/main ./cmd/alexandria"
   bin = "./tmp/main"
   include_ext = ["go", "tpl", "tmpl", "html", "sql"]
   exclude_dir = ["tmp", "bin", "vendor", "testdata", "migrations"]

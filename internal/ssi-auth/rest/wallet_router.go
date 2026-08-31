@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
@@ -90,7 +91,25 @@ func (r *WalletRouter) isLinked(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (r *WalletRouter) registerKey(c *gin.Context) {}
+func (r *WalletRouter) registerKey(c *gin.Context) {
+	var registerKeyReq registerKeyReq
+
+	if err := json.NewDecoder(c.Request.Body).Decode(&registerKeyReq); err != nil {
+		respondError(c, err)
+		return
+	}
+
+	if err := r.holder.RegisterKey(
+		c.Request.Context(),
+		registerKeyReq.Pem,
+		&registerKeyReq.Alias,
+	); err != nil {
+		respondError(c, err)
+		return
+	}
+
+	c.Status(http.StatusCreated)
+}
 
 func (r *WalletRouter) deleteKey(c *gin.Context) {}
 

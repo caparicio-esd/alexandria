@@ -10,6 +10,7 @@ COPY . .
 
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build \
+    -tags=jwx_es256k \
     -ldflags="-s -w -X main.version=${VERSION}" \
     -o /alexandria ./cmd/alexandria
 

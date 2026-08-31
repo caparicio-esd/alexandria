@@ -13,6 +13,7 @@ type Wallet interface {
 	// Link refreshes the wallet identity, returning whatever the remote
 	// currently considers its default DID.
 	Link(ctx context.Context) (Did, error)
+	RegisterKey(ctx context.Context, keyPlan *KeyPlan) error
 }
 
 // Clock is injected so credential expiry and DID timestamps stay deterministic

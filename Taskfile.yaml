@@ -1,5 +1,12 @@
 version: "3"
 
+# secp256k1 exists in jwx only under this build tag, and its absence is silent:
+# without it the curve is simply missing from the JWA registry. Setting it as
+# GOFLAGS means every go invocation below — build, test, lint, air — picks it
+# up, rather than each command carrying its own -tags.
+env:
+  GOFLAGS: -tags=jwx_es256k
+
 vars:
   BIN: alexandria
   MAIN: ./cmd/alexandria

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/trustbloc/did-go/doc/did"
 )
 
@@ -75,7 +76,31 @@ func (s *Service) IsLinked(ctx context.Context) bool {
 
 // RegisterKey imports raw PEM key material and indexes it under an optional alias.
 func (s *Service) RegisterKey(ctx context.Context, pem string, alias *string) error {
-	panic("wallet: RegisterKey not implemented")
+	var a string
+	if alias != nil {
+		a = *alias
+	}
+
+	u, err := uuid.NewRandom()
+	if err != nil {
+		return fmt.Errorf("minting a key id: %w", err)
+	}
+
+	// The id is the path the wallet files the material under, and it has to
+	// stay flat: Fafnir's development vault writes it straight into
+	// vault/secrets/<id> without creating parent directories, so a namespaced
+	// "crypto/keys/<uuid>" fails the write and takes the registration with it.
+	keyPlan := &KeyPlan{
+		ID:    fmt.Sprintf("%s.json", u),
+		Alias: a,
+		Pem:   pem,
+	}
+
+	if err := s.wallet.RegisterKey(ctx, keyPlan); err != nil {
+		return fmt.Errorf("wallet reported error by key registering: %w", err)
+	}
+
+	return nil
 }
 
 // DeleteKey purges a key, provided no DID still references it.

@@ -3,7 +3,9 @@ package fafnir
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/caparicio-esd/alexandria/internal/ssi-auth/jose"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 	"github.com/trustbloc/did-go/doc/did"
 )
@@ -89,4 +91,58 @@ func (d didResp) doc() (*did.Doc, error) {
 // wallet that issued it knows how to resolve it back to key material.
 func (k keyRef) toDomain() wallet.KeyBinding {
 	return wallet.KeyBinding{KeyID: k.Internal, Fragment: k.Fragment}
+}
+
+// keyReq is the wire form of a key registration. Fafnir spells the storage
+// path "id" — the same value it later hands back as keyRef.Internal — and takes
+// the material as PEM.
+type keyReq struct {
+	ID    string `json:"id"`
+	Alias string `json:"alias"`
+	Pem   string `json:"pem"`
+}
+
+// newKeyReq projects a domain key plan onto the wire.
+func newKeyReq(plan wallet.KeyPlan) keyReq {
+	return keyReq{ID: plan.ID, Alias: plan.Alias, Pem: plan.Pem}
+}
+
+// keyResp is a key record as Fafnir stores it: no private material comes back,
+// only the identifier it was filed under and the JWA description of the key.
+type keyResp struct {
+	ID        string    `json:"id"`
+	Alias     string    `json:"alias"`
+	Kty       string    `json:"kty"`
+	Crv       *string   `json:"crv"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ToDomain maps the Fafnir record onto the wallet domain entity.
+//
+// The JWA spellings are checked here, at the boundary: the domain holds them as
+// plain strings on the promise that they came off the registry, and this is the
+// only place that can keep it.
+func (k keyResp) ToDomain() (wallet.Key, error) {
+	if k.ID == "" {
+		return wallet.Key{}, fmt.Errorf("fafnir: key record carries no id: %w", wallet.ErrNotFound)
+	}
+
+	if _, err := jose.ParseKty(k.Kty); err != nil {
+		return wallet.Key{}, fmt.Errorf("fafnir: key %q: %w", k.ID, err)
+	}
+
+	// RSA and symmetric keys carry no curve, so only a present one is checked.
+	if k.Crv != nil && *k.Crv != "" {
+		if _, err := jose.ParseCrv(*k.Crv); err != nil {
+			return wallet.Key{}, fmt.Errorf("fafnir: key %q: %w", k.ID, err)
+		}
+	}
+
+	return wallet.Key{
+		ID:        k.ID,
+		Alias:     k.Alias,
+		Kty:       k.Kty,
+		Crv:       k.Crv,
+		CreatedAt: k.CreatedAt,
+	}, nil
 }

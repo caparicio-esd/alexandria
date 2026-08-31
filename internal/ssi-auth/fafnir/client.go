@@ -105,6 +105,51 @@ func (a *Adapter) Link(ctx context.Context) (wallet.Did, error) {
 	return out.ToDomain()
 }
 
+// RegisterKey imports raw PEM key material into the wallet, filed under the
+// storage path the plan carries. It satisfies the wallet.Wallet port.
+func (a *Adapter) RegisterKey(ctx context.Context, keyPlan *wallet.KeyPlan) error {
+	const path = "/keys/new"
+
+	if keyPlan == nil {
+		return fmt.Errorf("fafnir: %s needs a key plan: %w", path, wallet.ErrInvalidInput)
+	}
+
+	var out keyResp
+
+	started := time.Now()
+
+	res, err := a.http.R().
+		SetContext(ctx).
+		SetBody(newKeyReq(*keyPlan)).
+		SetResult(&out).
+		Post(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodPost, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodPost, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	if res.IsStatusFailure() {
+		return statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	// The record itself goes nowhere — the port asks only whether it worked —
+	// but it is still mapped, because that is what checks the wallet answered
+	// with a key it filed rather than with a 201 and nothing behind it.
+	if _, err := out.ToDomain(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // statusError turns a non-2xx response into a domain error, so callers can use
 // errors.Is against the wallet sentinels without knowing HTTP exists.
 func statusError(status int, path string, body []byte) error {

@@ -46,3 +46,8 @@ func newDidResp(d wallet.Did) didResp {
 		Document:           &d.Document,
 	}
 }
+
+type registerKeyReq struct {
+	Pem   string `json:"pem"`
+	Alias string `json:"alias,omitempty"`
+}

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/caparicio-esd/alexandria/internal/common"
 	"github.com/trustbloc/did-go/doc/did"
 )
 
@@ -76,11 +75,24 @@ type Did struct {
 // It carries no private material on purpose: the PEM lives in the KeyStore and
 // never crosses back into the domain, so no use case can leak it by accident.
 type Key struct {
-	ID         string
-	Alias      string
-	Alg        common.Alg
-	Thumbprint string
-	CreatedAt  time.Time
+	ID    string
+	Alias string
+	// Kty and Crv are the JWA spellings of the key type and curve — "OKP" and
+	// "Ed25519", say. They are plain strings here on purpose: they arrive
+	// already checked against the JWA registry by internal/ssi-auth/jose, and
+	// naming their types would drag the JOSE library into the domain.
+	Kty       string
+	Crv       *string
+	CreatedAt time.Time
+}
+
+// KeyPlan is a key registration as the domain states it: the storage path the
+// wallet should file the material under, the alias it is indexed by, and the
+// PEM itself. It travels outwards only — nothing hands one back.
+type KeyPlan struct {
+	ID    string
+	Alias string
+	Pem   string
 }
 
 // Credential is a Verifiable Credential stored in the wallet.
