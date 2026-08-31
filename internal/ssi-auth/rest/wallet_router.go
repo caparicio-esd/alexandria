@@ -8,10 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// WalletRouter is the driving adapter that exposes the wallet use cases over
+// HTTP. It chooses status codes and shapes bodies; it decides nothing else.
 type WalletRouter struct {
 	holder *wallet.Service
 }
 
+// NewWalletRouter wires the router onto the wallet service it drives.
 func NewWalletRouter(holder *wallet.Service) *WalletRouter {
 	return &WalletRouter{holder: holder}
 }
@@ -64,6 +67,9 @@ func (r *WalletRouter) Register(parent *gin.RouterGroup) *gin.RouterGroup {
 	return walletRouter
 }
 
+// RegisterWellKnown mounts the routes that must answer from the root of the
+// host rather than from under the API prefix, because a did:web resolver looks
+// for them at a fixed path.
 func (r *WalletRouter) RegisterWellKnown(engine *gin.Engine) {
 	engine.GET("/.well-known/did.json", r.getDidDoc)
 }
@@ -103,6 +109,7 @@ func (r *WalletRouter) registerKey(c *gin.Context) {
 		c.Request.Context(),
 		registerKeyReq.Pem,
 		&registerKeyReq.Alias,
+		registerKeyReq.ID,
 	); err != nil {
 		respondError(c, err)
 		return
@@ -111,11 +118,44 @@ func (r *WalletRouter) registerKey(c *gin.Context) {
 	c.Status(http.StatusCreated)
 }
 
-func (r *WalletRouter) deleteKey(c *gin.Context) {}
+func (r *WalletRouter) deleteKey(_ *gin.Context) {}
 
-func (r *WalletRouter) getWalletKeys(c *gin.Context) {}
+func (r *WalletRouter) getWalletKeys(_ *gin.Context) {}
 
-func (r *WalletRouter) registerDid(c *gin.Context) {}
+func (r *WalletRouter) registerDid(c *gin.Context) {
+	var req registerDidReq
+
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		respondError(c, err)
+		return
+	}
+
+	builder, err := req.Builder.toDomain()
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+
+	services, err := servicesToDomain(req.Service)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+
+	err = r.holder.RegisterDid(
+		c.Request.Context(),
+		builder,
+		req.Keys,
+		req.Alias,
+		services,
+	)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+
+	c.Status(http.StatusCreated)
+}
 
 func (r *WalletRouter) getWalletDid(c *gin.Context) {
 	id, err := r.holder.Did(c.Request.Context())
@@ -141,22 +181,22 @@ func (r *WalletRouter) getDidDoc(c *gin.Context) {
 	c.JSON(http.StatusOK, &doc)
 }
 
-func (r *WalletRouter) deleteDid(c *gin.Context) {}
+func (r *WalletRouter) deleteDid(_ *gin.Context) {}
 
-func (r *WalletRouter) setDefaultDid(c *gin.Context) {}
+func (r *WalletRouter) setDefaultDid(_ *gin.Context) {}
 
-func (r *WalletRouter) addKeyToDid(c *gin.Context) {}
+func (r *WalletRouter) addKeyToDid(_ *gin.Context) {}
 
-func (r *WalletRouter) removeKeyFromDid(c *gin.Context) {}
+func (r *WalletRouter) removeKeyFromDid(_ *gin.Context) {}
 
-func (r *WalletRouter) setDefaultKey(c *gin.Context) {}
+func (r *WalletRouter) setDefaultKey(_ *gin.Context) {}
 
-func (r *WalletRouter) deleteCredential(c *gin.Context) {}
+func (r *WalletRouter) deleteCredential(_ *gin.Context) {}
 
-func (r *WalletRouter) getWalletCredentials(c *gin.Context) {}
+func (r *WalletRouter) getWalletCredentials(_ *gin.Context) {}
 
-func (r *WalletRouter) getWalletInfo(c *gin.Context) {}
+func (r *WalletRouter) getWalletInfo(_ *gin.Context) {}
 
-func (r *WalletRouter) processOid4vci(c *gin.Context) {}
+func (r *WalletRouter) processOid4vci(_ *gin.Context) {}
 
-func (r *WalletRouter) processOid4vp(c *gin.Context) {}
+func (r *WalletRouter) processOid4vp(_ *gin.Context) {}

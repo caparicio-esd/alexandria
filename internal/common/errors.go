@@ -1,4 +1,4 @@
-package wallet
+package common
 
 import (
 	"errors"
@@ -35,7 +35,8 @@ func (e ValidationError) Error() string {
 // the whole class with a single errors.Is.
 func (e ValidationError) Is(target error) bool { return target == ErrInvalidInput }
 
-// invalid is the shorthand used across the use cases.
-func invalid(field, reason string) error {
+// Invalid is the shorthand the use cases build their rejections with, naming the
+// offending field and why it was refused.
+func Invalid(field, reason string) error {
 	return ValidationError{Field: field, Reason: reason}
 }

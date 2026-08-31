@@ -1,14 +1,4 @@
 // Package ssiauth assembles the identity and authorization bounded context.
-//
-// It is the context's own composition: given configuration and the shared
-// infrastructure, it builds its adapters, wires them to its use cases through
-// the ports the domain declares, and hands back one thing the process can mount
-// and supervise. Nothing outside this package needs to know that the wallet is
-// reached over HTTP, or that its HTTP surface is called rest.
-//
-// This is a constructor, not a container. Dependencies arrive as parameters and
-// travel inwards; the module never reaches for a global, and the domain
-// underneath it still imports no framework.
 package ssiauth
 
 import (
@@ -21,6 +11,7 @@ import (
 	"github.com/caparicio-esd/alexandria/internal/config"
 	"github.com/caparicio-esd/alexandria/internal/observability"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/fafnir"
+	keys "github.com/caparicio-esd/alexandria/internal/ssi-auth/pem"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/rest"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 	"github.com/gin-gonic/gin"
@@ -38,13 +29,8 @@ const (
 const Name = "ssi-auth"
 
 // Deps is everything the context needs from outside itself.
-//
-// A struct rather than a parameter list: it is the seam that grows — a database
-// pool lands here when the first repository does — and growing a struct does
-// not rewrite every call site.
 type Deps struct {
-	// Config is the whole document. The module picks out its own sections and
-	// passes values, never the Config, to what it builds.
+	// Config is the whole document
 	Config *config.Config
 	// Logger is the process logger; the module scopes it to itself.
 	Logger *slog.Logger
@@ -86,7 +72,7 @@ func New(deps Deps) (*Module, error) {
 		return nil, fmt.Errorf("%s: building the wallet adapter: %w", Name, err)
 	}
 
-	service := wallet.NewService(adapter, deps.Clock,
+	service := wallet.NewService(adapter, keys.NewInspector(), deps.Clock,
 		observability.Scoped(deps.Logger, observability.ModuleSSIAuth, "wallet"))
 
 	return &Module{
@@ -111,9 +97,7 @@ func (m *Module) Register(api *gin.RouterGroup) { m.router.Register(api) }
 // origin, outside any version prefix.
 func (m *Module) RegisterRoot(engine *gin.Engine) { m.router.RegisterRoot(engine) }
 
-// Checks are the context's contributions to readiness. The names are what an
-// operator reads off the probe, so they say what is missing, not which package
-// is unhappy.
+// Checks are the context's contributions to readiness /readyz path
 func (m *Module) Checks() map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
 		"wallet": func(ctx context.Context) error {
@@ -137,13 +121,6 @@ func (m *Module) Describe() (string, bool) {
 }
 
 // Start acquires the identity everything else in this context depends on.
-//
-// It spends a bounded budget on the handshake and then hands the job to a
-// background goroutine. Blocking briefly catches the common case, where the
-// node and its wallet start together and the wallet is seconds behind; past the
-// budget, refusing to start would only produce a restart loop. The context
-// comes up, reports itself not ready, and keeps trying — which is what an
-// orchestrator knows how to act on.
 func (m *Module) Start(ctx context.Context) error {
 	// A context of its own, so Close can stop the retry loop however the
 	// process exits.
@@ -174,9 +151,7 @@ func (m *Module) Start(ctx context.Context) error {
 	return nil
 }
 
-// link retries the handshake until it succeeds or the context ends, pausing on
-// a capped exponential backoff. It reports each failed attempt only while
-// announce is set, so the background loop does not narrate an outage forever.
+// link retries the handshake with a wallet
 func (m *Module) link(ctx context.Context, announce bool) (wallet.Did, error) {
 	backoff := linkFirstBackoff
 

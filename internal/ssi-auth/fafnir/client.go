@@ -1,8 +1,5 @@
 // Package fafnir is the driven adapter that backs the wallet ports with a
 // remote Fafnir wallet instance, reached over HTTP.
-//
-// Nothing in here is imported by the domain: the wallet package declares the
-// ports, and this package happens to satisfy them.
 package fafnir
 
 import (
@@ -15,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/caparicio-esd/alexandria/internal/common"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 	"resty.dev/v3"
 )
@@ -24,22 +22,15 @@ const defaultTimeout = 10 * time.Second
 var _ wallet.Wallet = (*Adapter)(nil)
 
 // Adapter talks to a Fafnir wallet over its HTTP API.
-//
-// The type is named Adapter rather than FafnirAdapter because the package
-// qualifier already carries the name: callers read fafnir.Adapter.
 type Adapter struct {
-	http *resty.Client
-	// logger is scoped to this component, so every record it emits is
-	// attributable to the wallet adapter rather than to the process at large.
+	http   *resty.Client
 	logger *slog.Logger
 }
 
-// New builds an adapter pointed at the given Fafnir base URL, for example
-// "http://localhost:7002". The URL is validated here so a typo fails at
-// startup instead of on the first request.
-//
-// The logger is expected to be scoped by the composition root; a nil one falls
-// back to the default so a test can build an adapter without ceremony.
+// New builds an adapter against the Fafnir instance at baseURL, which must be
+// absolute: a relative one would send every call to whatever host the process
+// happens to resolve, and fail late rather than here. A nil logger falls back to
+// the default one.
 func New(baseURL string, logger *slog.Logger) (*Adapter, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -62,8 +53,7 @@ func New(baseURL string, logger *slog.Logger) (*Adapter, error) {
 	return &Adapter{http: client, logger: logger}, nil
 }
 
-// Close releases the transport held by the underlying client. Call it once, when
-// the process shuts down, not per request.
+// Close releases the transport held by the underlying client
 func (a *Adapter) Close() error {
 	return a.http.Close()
 }
@@ -75,8 +65,8 @@ func (a *Adapter) Link(ctx context.Context) (wallet.Did, error) {
 
 	var out didResp
 
+	// call
 	started := time.Now()
-
 	res, err := a.http.R().
 		SetContext(ctx).
 		SetResult(&out).
@@ -94,34 +84,32 @@ func (a *Adapter) Link(ctx context.Context) (wallet.Did, error) {
 		"method", http.MethodGet, "path", path,
 		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
 
+	// validate
 	if res.IsStatusFailure() {
 		return wallet.Did{}, statusError(res.StatusCode(), path, res.Bytes())
 	}
-
 	if out.Did == "" {
-		return wallet.Did{}, fmt.Errorf("fafnir: %s returned an empty did: %w", path, wallet.ErrNotFound)
+		return wallet.Did{}, fmt.Errorf("fafnir: %s returned an empty did: %w", path, common.ErrNotFound)
 	}
 
+	// send back to domain
 	return out.ToDomain()
 }
 
-// RegisterKey imports raw PEM key material into the wallet, filed under the
-// storage path the plan carries. It satisfies the wallet.Wallet port.
+// RegisterKey imports raw PEM key material into the wallet
 func (a *Adapter) RegisterKey(ctx context.Context, keyPlan *wallet.KeyPlan) error {
 	const path = "/keys/new"
 
+	// validate input
 	if keyPlan == nil {
-		return fmt.Errorf("fafnir: %s needs a key plan: %w", path, wallet.ErrInvalidInput)
+		return fmt.Errorf("fafnir: %s needs a key plan: %w", path, common.ErrInvalidInput)
 	}
 
-	var out keyResp
-
+	// call
 	started := time.Now()
-
 	res, err := a.http.R().
 		SetContext(ctx).
 		SetBody(newKeyReq(*keyPlan)).
-		SetResult(&out).
 		Post(path)
 	if err != nil {
 		a.logger.DebugContext(ctx, "wallet call failed",
@@ -131,24 +119,64 @@ func (a *Adapter) RegisterKey(ctx context.Context, keyPlan *wallet.KeyPlan) erro
 		return fmt.Errorf("fafnir: calling %s: %w", path, err)
 	}
 	defer func() { _ = res.Body.Close() }()
-
 	a.logger.DebugContext(ctx, "wallet call",
 		"method", http.MethodPost, "path", path,
 		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
 
+	// validate
 	if res.IsStatusFailure() {
 		return statusError(res.StatusCode(), path, res.Bytes())
 	}
 
-	// The record itself goes nowhere — the port asks only whether it worked —
-	// but it is still mapped, because that is what checks the wallet answered
-	// with a key it filed rather than with a 201 and nothing behind it.
-	if _, err := out.ToDomain(); err != nil {
-		return err
-	}
-
+	//
 	return nil
 }
+
+// RegisterDid asks the wallet to mint a DID from the given builder and bind the
+// referenced keys into it, returning the identifier it minted.
+func (a *Adapter) RegisterDid(
+	ctx context.Context,
+	didPlan *wallet.DidPlan,
+) error {
+	const path = "/dids/new"
+
+	// validate input
+	if didPlan == nil {
+		return fmt.Errorf("fafnir: %s needs a did plan: %w", path, common.ErrInvalidInput)
+	}
+	didReq, err := newDidReq(*didPlan)
+	if err != nil {
+		return fmt.Errorf("fafnir: %s needs a did correct plan: %w", path, err)
+	}
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		SetBody(&didReq).
+		Post(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodPost, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodPost, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	//
+	return nil
+}
+
+// ===== HELPERS ===============================================================
 
 // statusError turns a non-2xx response into a domain error, so callers can use
 // errors.Is against the wallet sentinels without knowing HTTP exists.
@@ -157,11 +185,11 @@ func statusError(status int, path string, body []byte) error {
 
 	switch status {
 	case http.StatusNotFound:
-		sentinel = wallet.ErrNotFound
+		sentinel = common.ErrNotFound
 	case http.StatusConflict:
-		sentinel = wallet.ErrConflict
+		sentinel = common.ErrConflict
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		sentinel = wallet.ErrInvalidInput
+		sentinel = common.ErrInvalidInput
 	default:
 		sentinel = errors.New("unexpected status")
 	}

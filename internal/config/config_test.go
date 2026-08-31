@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caparicio-esd/alexandria/internal/common"
 	"github.com/caparicio-esd/alexandria/internal/config"
-	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 )
 
 // TestLoadFixtures runs the parser against the four node configurations, which
@@ -102,8 +102,8 @@ func TestLoadFixtures(t *testing.T) {
 			}
 
 			// "Jwk" in the file; wallet.ParseMethod is case-insensitive.
-			if got := cfg.Did.Method; got != wallet.MethodJwk {
-				t.Errorf("Did.Method = %q, want %q", got, wallet.MethodJwk)
+			if got := cfg.Did.Method; got != common.MethodJwk {
+				t.Errorf("Did.Method = %q, want %q", got, common.MethodJwk)
 			}
 
 			if got := cfg.Common.API.Prefix(); got != "/api/v1" {

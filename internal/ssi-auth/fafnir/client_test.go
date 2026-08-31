@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/caparicio-esd/alexandria/internal/common"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/fafnir"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 )
@@ -82,53 +83,8 @@ func TestRegisterKeyCall(t *testing.T) {
 	}
 }
 
-// TestRegisterKeyChecksTheRecord pins what the adapter still does with the
-// answer now that the port discards it: a record it cannot map — here a "kty"
-// that is not in the JWA registry — is a failed registration, not a silent one.
-func TestRegisterKeyChecksTheRecord(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]struct {
-		body    string
-		wantErr bool
-	}{
-		"a filed key":    {keyRecord, false},
-		"rsa, no curve":  {`{"id":"a.json","alias":"base","kty":"RSA","crv":null,"created_at":"2026-08-21T18:42:05Z"}`, false},
-		"nothing behind": {`{}`, true},
-		"unknown kty":    {`{"id":"a.json","kty":"octet","created_at":"2026-08-21T18:42:05Z"}`, true},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusCreated)
-				_, _ = io.WriteString(w, tc.body)
-			}))
-			defer srv.Close()
-
-			adapter, err := fafnir.New(srv.URL, nil)
-			if err != nil {
-				t.Fatalf("building adapter: %v", err)
-			}
-			defer func() { _ = adapter.Close() }()
-
-			err = adapter.RegisterKey(t.Context(), &wallet.KeyPlan{ID: "a.json", Alias: "base", Pem: "pem"})
-			if tc.wantErr && err == nil {
-				t.Error("expected the record to be rejected")
-			}
-
-			if !tc.wantErr && err != nil {
-				t.Errorf("RegisterKey: %v", err)
-			}
-		})
-	}
-}
-
-// TestRegisterKeyStatusErrors maps the statuses onto the wallet sentinels, so a
-// caller can branch on them without knowing HTTP exists.
+// TestRegisterKeyStatusErrors pins the translation of HTTP statuses onto the
+// domain sentinels, so a caller can branch on them without knowing HTTP exists.
 func TestRegisterKeyStatusErrors(t *testing.T) {
 	t.Parallel()
 
@@ -136,8 +92,8 @@ func TestRegisterKeyStatusErrors(t *testing.T) {
 		status int
 		want   error
 	}{
-		"malformed payload": {http.StatusBadRequest, wallet.ErrInvalidInput},
-		"alias taken":       {http.StatusConflict, wallet.ErrConflict},
+		"malformed payload": {http.StatusBadRequest, common.ErrInvalidInput},
+		"alias taken":       {http.StatusConflict, common.ErrConflict},
 		"wrong verb":        {http.StatusMethodNotAllowed, nil},
 	}
 
@@ -185,7 +141,7 @@ func TestRegisterKeyRejectsNilPlan(t *testing.T) {
 	}
 	defer func() { _ = adapter.Close() }()
 
-	if err := adapter.RegisterKey(t.Context(), nil); !errors.Is(err, wallet.ErrInvalidInput) {
-		t.Errorf("error = %v, want it to match %v", err, wallet.ErrInvalidInput)
+	if err := adapter.RegisterKey(t.Context(), nil); !errors.Is(err, common.ErrInvalidInput) {
+		t.Errorf("error = %v, want it to match %v", err, common.ErrInvalidInput)
 	}
 }

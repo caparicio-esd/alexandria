@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/caparicio-esd/alexandria/internal/common"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/jose"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 	"github.com/trustbloc/did-go/doc/did"
 )
+
+// ===== DID related DTO's =====================================================
 
 type didResp struct {
 	// ID is the record identifier inside Fafnir, not the DID itself.
@@ -41,18 +44,13 @@ type keyRef struct {
 	Fragment string `json:"fragment"`
 }
 
-// ToDomain maps the Fafnir record onto the wallet domain entity.
-//
-// This is the anti-corruption boundary: Fafnir's spellings ("Jwk"), its storage
-// paths and its non-conformant documents are dealt with here, and the domain
-// receives something it defined itself.
 func (d didResp) ToDomain() (wallet.Did, error) {
-	method, err := wallet.ParseMethod(d.Type)
+	method, err := common.ParseMethod(d.Type)
 	if err != nil {
 		return wallet.Did{}, fmt.Errorf("fafnir: did %q: %w", d.Did, err)
 	}
 
-	doc, err := d.doc()
+	doc, err := d.document()
 	if err != nil {
 		return wallet.Did{}, fmt.Errorf("fafnir: did %q: %w", d.Did, err)
 	}
@@ -73,12 +71,8 @@ func (d didResp) ToDomain() (wallet.Did, error) {
 	}, nil
 }
 
-// doc normalizes and parses the embedded DID Document.
-//
-// Transport and content fail separately by design: an unmarshalling error on
-// didResp means Fafnir sent something unreadable, while an error here means the
-// document itself does not conform.
-func (d didResp) doc() (*did.Doc, error) {
+// document normalizes and parses the embedded DID Document.
+func (d didResp) document() (*did.Doc, error) {
 	normalized, err := normalizeDidDocument(d.DidDocument)
 	if err != nil {
 		return nil, err
@@ -87,28 +81,101 @@ func (d didResp) doc() (*did.Doc, error) {
 	return did.ParseDocument(normalized)
 }
 
-// toDomain drops the storage path into the domain as an opaque key id: only the
-// wallet that issued it knows how to resolve it back to key material.
 func (k keyRef) toDomain() wallet.KeyBinding {
 	return wallet.KeyBinding{KeyID: k.Internal, Fragment: k.Fragment}
 }
 
-// keyReq is the wire form of a key registration. Fafnir spells the storage
-// path "id" — the same value it later hands back as keyRef.Internal — and takes
-// the material as PEM.
+type didReq struct {
+	Builder didBuilderReq   `json:"builder"`
+	KeysID  []string        `json:"keys,omitempty"`
+	Alias   string          `json:"alias"`
+	Service []didServiceReq `json:"service,omitempty"`
+}
+
+type didBuilderReq struct {
+	Jwk *jwkConfigReq `json:"Jwk,omitempty"`
+	Web *webConfigReq `json:"Web,omitempty"`
+}
+
+type jwkConfigReq struct {
+	Pem string `json:"pem"`
+}
+
+type webConfigReq struct {
+	Domain string  `json:"domain"`
+	Port   *string `json:"port,omitempty"`
+	Path   *string `json:"path,omitempty"`
+}
+
+type didServiceReq struct {
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type"`
+	Endpoint string `json:"serviceEndpoint"`
+}
+
+// newDidReq projects a domain DID registration onto the wire.
+func newDidReq(
+	didPlan wallet.DidPlan,
+) (didReq, error) {
+	builderReq, err := newDidBuilderReq(didPlan.Builder)
+	if err != nil {
+		return didReq{}, err
+	}
+
+	// Service is a pointer in the domain, so "no services" arrives as nil and
+	// dereferencing it unguarded is a panic on the ordinary case of a DID with
+	// no endpoints to publish.
+	var services []common.DidService
+	if didPlan.Service != nil {
+		services = *didPlan.Service
+	}
+
+	entries := make([]didServiceReq, 0, len(services))
+	for _, s := range services {
+		entries = append(entries, didServiceReq{
+			ID:       s.ID,
+			Type:     string(s.Type),
+			Endpoint: s.Endpoint,
+		})
+	}
+
+	return didReq{
+		Builder: builderReq,
+		KeysID:  didPlan.Keys,
+		Alias:   didPlan.Alias,
+		Service: entries,
+	}, nil
+}
+
+// newDidBuilderReq turns the sealed union into its external-tagging form.
+func newDidBuilderReq(builder common.DidBuilder) (didBuilderReq, error) {
+	switch b := builder.(type) {
+	case common.JwkDidBuilder:
+		return didBuilderReq{Jwk: &jwkConfigReq{Pem: b.Pem}, Web: nil}, nil
+
+	case common.WebDidBuilder:
+		return didBuilderReq{
+			Jwk: nil,
+			Web: &webConfigReq{Domain: b.Domain, Port: b.Port, Path: b.Path},
+		}, nil
+
+	default:
+		return didBuilderReq{}, fmt.Errorf("fafnir: did builder %T: %w", builder, common.ErrUnsupported)
+	}
+}
+
+// ===== KEYS related DTO's =====================================================
+
 type keyReq struct {
 	ID    string `json:"id"`
 	Alias string `json:"alias"`
 	Pem   string `json:"pem"`
 }
 
-// newKeyReq projects a domain key plan onto the wire.
 func newKeyReq(plan wallet.KeyPlan) keyReq {
 	return keyReq{ID: plan.ID, Alias: plan.Alias, Pem: plan.Pem}
 }
 
-// keyResp is a key record as Fafnir stores it: no private material comes back,
-// only the identifier it was filed under and the JWA description of the key.
 type keyResp struct {
 	ID        string    `json:"id"`
 	Alias     string    `json:"alias"`
@@ -117,14 +184,9 @@ type keyResp struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ToDomain maps the Fafnir record onto the wallet domain entity.
-//
-// The JWA spellings are checked here, at the boundary: the domain holds them as
-// plain strings on the promise that they came off the registry, and this is the
-// only place that can keep it.
 func (k keyResp) ToDomain() (wallet.Key, error) {
 	if k.ID == "" {
-		return wallet.Key{}, fmt.Errorf("fafnir: key record carries no id: %w", wallet.ErrNotFound)
+		return wallet.Key{}, fmt.Errorf("fafnir: key record carries no id: %w", common.ErrNotFound)
 	}
 
 	if _, err := jose.ParseKty(k.Kty); err != nil {

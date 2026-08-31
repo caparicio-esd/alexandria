@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/caparicio-esd/alexandria/internal/common"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 	"github.com/trustbloc/did-go/doc/did"
 )
@@ -105,8 +106,8 @@ func TestDidRespToDomain(t *testing.T) {
 		t.Fatalf("ToDomain(): %v", err)
 	}
 
-	if domain.Method != wallet.MethodJwk {
-		t.Errorf("Method = %q, want %q", domain.Method, wallet.MethodJwk)
+	if domain.Method != common.MethodJwk {
+		t.Errorf("Method = %q, want %q", domain.Method, common.MethodJwk)
 	}
 
 	if domain.Alias != "base" || !domain.Default {
@@ -228,5 +229,92 @@ func TestNewKeyReqSpellsFafnirFields(t *testing.T) {
 		if got[field] != value {
 			t.Errorf("body[%q] = %q, want %q", field, got[field], value)
 		}
+	}
+}
+
+// TestDidBuilderReqIsExternallyTagged pins the wire shape of the union rather
+// than the Go types, because that is where a mistake is silent: serde reads an
+// object it does not recognise as an absent variant, so a wrong member name
+// produces a rejected registration, not a decoding error.
+func TestDidBuilderReqIsExternallyTagged(t *testing.T) {
+	t.Parallel()
+
+	port := "8443"
+	path := "issuer"
+
+	cases := map[string]struct {
+		builder common.DidBuilder
+		want    string
+	}{
+		"jwk carries the key": {
+			builder: common.JwkDidBuilder{Pem: "-----BEGIN PRIVATE KEY-----"},
+			want:    `{"Jwk":{"pem":"-----BEGIN PRIVATE KEY-----"}}`,
+		},
+		"web carries the authority": {
+			builder: common.WebDidBuilder{Domain: "alexandria.upm.es", Port: &port, Path: &path},
+			want:    `{"Web":{"domain":"alexandria.upm.es","port":"8443","path":"issuer"}}`,
+		},
+		// Absent is not empty: serde reads a missing member as None, and the
+		// pointers are what keep the two apart all the way to the wire.
+		"web omits what was not given": {
+			builder: common.WebDidBuilder{Domain: "alexandria.upm.es", Port: nil, Path: nil},
+			want:    `{"Web":{"domain":"alexandria.upm.es"}}`,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			builder, err := newDidBuilderReq(tc.builder)
+			if err != nil {
+				t.Fatalf("newDidBuilderReq: %v", err)
+			}
+
+			encoded, err := json.Marshal(builder)
+			if err != nil {
+				t.Fatalf("marshalling: %v", err)
+			}
+
+			if string(encoded) != tc.want {
+				t.Errorf("got  %s\nwant %s", encoded, tc.want)
+			}
+		})
+	}
+}
+
+// TestNewDidReqCarriesTheWholeRegistration checks the envelope around the union,
+// including the service entries, which travel under their DID Core names.
+func TestNewDidReqCarriesTheWholeRegistration(t *testing.T) {
+	t.Parallel()
+
+	services := []common.DidService{{
+		ID:       "",
+		Type:     common.ServiceCredentialIssuer,
+		Endpoint: "https://alexandria.upm.es/oid4vci",
+	}}
+
+	req, err := newDidReq(wallet.DidPlan{
+		Builder: common.WebDidBuilder{Domain: "alexandria.upm.es"},
+		Alias:   "issuer",
+		Keys:    []string{"NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs.json"},
+		Service: &services,
+	})
+	if err != nil {
+		t.Fatalf("newDidReq: %v", err)
+	}
+
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+
+	const want = `{"builder":{"Web":{"domain":"alexandria.upm.es"}},` +
+		`"keys":["NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs.json"],` +
+		`"alias":"issuer",` +
+		`"service":[{"type":"CredentialIssuer","serviceEndpoint":"https://alexandria.upm.es/oid4vci"}]}`
+
+	if string(encoded) != want {
+		t.Errorf("got  %s\nwant %s", encoded, want)
 	}
 }

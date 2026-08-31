@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
+	"github.com/caparicio-esd/alexandria/internal/common"
 )
 
 // Did selects the identifier scheme this node anchors its identity on.
@@ -16,7 +16,7 @@ import (
 // place, and strict decoding survives.
 type Did struct {
 	// Method is the DID method, "jwk" or "web".
-	Method wallet.Method `mapstructure:"type"`
+	Method common.DidMethod `mapstructure:"type"`
 	// Domain is the authority a did:web resolves from. Unused by did:jwk.
 	Domain string `mapstructure:"domain,omitempty"`
 	// Path is the optional sub-path a did:web is published under.
@@ -31,7 +31,7 @@ type Did struct {
 // The pointer receiver is what lets it normalise in place; the other sections
 // take a value receiver because they only inspect.
 func (d *Did) Validate() error {
-	method, err := wallet.ParseMethod(string(d.Method))
+	method, err := common.ParseMethod(string(d.Method))
 	if err != nil {
 		return fmt.Errorf("%w: did_config.type: %w", ErrInvalid, err)
 	}
@@ -39,11 +39,11 @@ func (d *Did) Validate() error {
 	d.Method = method
 
 	switch method {
-	case wallet.MethodWeb:
+	case common.MethodWeb:
 		if d.Domain == "" {
 			return invalid("did_config.domain", "did:web needs a domain to resolve from")
 		}
-	case wallet.MethodJwk:
+	case common.MethodJwk:
 		// Rejected rather than ignored: a domain under did:jwk means the
 		// operator believes it does something, and it does not.
 		if d.Domain != "" || d.Path != "" || d.Port != "" {
