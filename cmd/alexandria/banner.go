@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/caparicio-esd/alexandria/internal/config"
-	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
 )
 
 // The startup report is styled, but it must survive being piped into a file or
@@ -28,7 +27,6 @@ var (
 	labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Width(10)
 	valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	okStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
-	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	faintStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
@@ -121,24 +119,16 @@ func summaryAttrs(cfg *config.Config) []any {
 	}
 }
 
-// linked reports the identity the wallet handed over.
-func (r *report) linked(identity wallet.Did) error {
-	if err := r.line(okStyle.Render(" ✓ linked") + "   " + valueStyle.Render(shortenDid(identity.ID))); err != nil {
-		return err
+// module reports a bounded context that finished starting, with whatever it
+// had to say for itself.
+func (r *report) module(name, detail string) error {
+	line := okStyle.Render(" ✓ "+name) + strings.Repeat(" ", max(1, 12-len(name)))
+
+	if detail == "" {
+		return r.line(line + faintStyle.Render("started"))
 	}
 
-	detail := "alias " + identity.Alias
-	if identity.DefaultKey.Fragment != "" {
-		detail += " · key #" + identity.DefaultKey.Fragment
-	}
-
-	return r.line(faintStyle.Render("            " + detail))
-}
-
-// waiting reports a failed handshake attempt and the pause before the next one.
-func (r *report) waiting(attempt int, backoff, reason string) error {
-	return r.line(warnStyle.Render(" … wallet not ready") +
-		faintStyle.Render(" (attempt "+strconv.Itoa(attempt)+", retrying in "+backoff+") "+reason))
+	return r.line(line + valueStyle.Render(shortenDid(detail)))
 }
 
 // listening reports the address the server came up on.

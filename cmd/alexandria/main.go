@@ -5,14 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
-
-	"github.com/caparicio-esd/alexandria/internal/observability"
 )
 
 // version is injected at build time with -ldflags "-X main.version=...".
@@ -34,7 +30,10 @@ func main() {
 	}
 }
 
-// run takes its dependencies as parameters so tests can exercise it directly.
+// run is the whole life of the process, in the three steps it actually has:
+// resolve the configuration, inject the dependencies, serve until told to stop.
+//
+// It takes its dependencies as parameters so tests can exercise it directly.
 func run(ctx context.Context, args []string, stdout io.Writer) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -44,84 +43,22 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 
-	root, err := observability.NewLogger(stdout, cfg.Observability,
-		slog.String("service", "alexandria"),
-		slog.String("version", version),
-	)
+	app, err := newApp(ctx, cfg, stdout, os.Environ())
 	if err != nil {
 		return err
 	}
 
-	// The composition root logs under its own name; every subsystem gets a
-	// logger scoped to its module and component.
-	logger := observability.Scoped(root, observability.ModuleMain, "")
-
-	// A human at a terminal gets the table; a log pipeline gets the same facts
-	// as one record it can actually index.
-	out := newReport(stdout, os.Environ())
-
-	if observability.UsesJSON(stdout, cfg.Observability.LogFormat) {
-		logger.InfoContext(ctx, "configuration loaded", summaryAttrs(cfg)...)
-	} else if err := out.summary(version, cfg); err != nil {
-		return err
-	}
-
-	metrics, err := startMetrics(cfg)
-	if err != nil {
-		return err
-	}
-
-	defer shutdownMetrics(ctx, metrics, logger)
-
-	database, err := openDatabase(ctx, cfg, logger)
-	if err != nil {
-		return err
-	}
-
-	if database != nil {
-		defer database.Close()
-	}
-
-	walletService, closeWallet, err := buildWallet(cfg, logger)
-	if err != nil {
-		return err
-	}
-
-	defer closeWallet()
-
-	health := observability.NewHealth()
-	health.Register("wallet", walletCheck(walletService))
-
-	if database != nil {
-		health.Register("database", database.Check)
-	}
-
-	// The background linker gets a context of its own so run can shut it down
-	// and wait for it, whichever way it returns. A goroutine that outlives the
-	// function that started it is a leak, and it would go on writing to a
-	// writer the caller believes it owns again.
-	linkCtx, cancelLink := context.WithCancel(ctx)
-	defer cancelLink()
-
-	var background sync.WaitGroup
-
-	defer background.Wait()
-
-	linkWallet(linkCtx, &background, cfg, walletService, out, logger)
-
-	engine, err := buildEngine(cfg, health, walletService, metrics, root)
-	if err != nil {
-		return err
-	}
-
-	internal := buildInternalServer(cfg, metrics, root)
-	internal.Start()
-
-	if addr := internal.Addr(); addr != "" {
-		if err := out.internal(addr, cfg.Observability); err != nil {
-			return err
+	// Close is deferred before Start so a context that fails halfway still
+	// releases what the ones before it acquired.
+	defer func() {
+		if err := app.Close(ctx); err != nil {
+			app.logger.Error("shutting down", "err", err)
 		}
+	}()
+
+	if err := app.Start(ctx); err != nil {
+		return err
 	}
 
-	return serve(ctx, cfg, engine, internal, out, logger)
+	return app.Serve(ctx)
 }

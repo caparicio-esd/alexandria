@@ -15,11 +15,12 @@ func NewCoreRouter(wallet *WalletRouter) *CoreRouter {
 }
 
 // Register mounts /ssi-auth and its subtrees on the engine.
-func (r *CoreRouter) Register(engine *gin.Engine) *gin.RouterGroup {
+// It returns nothing on purpose: the group is an implementation detail of this
+// context, and handing it out would let a caller mount routes under a prefix
+// this router is responsible for.
+func (r *CoreRouter) Register(engine *gin.Engine) {
 	coreRouter := engine.Group("/ssi-auth")
 
 	r.wallet.Register(coreRouter)
 	r.wallet.RegisterWellKnown(engine)
-
-	return coreRouter
 }
