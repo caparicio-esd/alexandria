@@ -35,8 +35,10 @@ type Module interface {
 	// Start acquires whatever the context needs before it can serve. A context
 	// that comes up degraded returns nil and says so through its checks.
 	Start(ctx context.Context) error
-	// Register mounts the context's HTTP surface.
-	Register(engine *gin.Engine)
+	// Register mounts the context's HTTP surface under the versioned API
+	// group the router hands it. A context that also needs a route at the root
+	// of the origin implements httpapi.RootModule as well.
+	Register(api *gin.RouterGroup)
 	// Checks are the context's contributions to readiness, by name.
 	Checks() map[string]func(context.Context) error
 	// Close releases what the context owns, including its goroutines.
@@ -107,7 +109,7 @@ func newApp(ctx context.Context, cfg *config.Config, stdout io.Writer, environ [
 	// ===== Bounded contexts ==================================================
 	// One entry per hexagon. Each is handed what it needs and returns itself
 	// assembled; the composition root never sees their adapters.
-	identity, err := ssiauth.New(ssiauth.Deps{
+	ssiAuthModule, err := ssiauth.New(ssiauth.Deps{
 		Config: cfg,
 		Logger: logger,
 		Clock:  systemClock{},
@@ -116,7 +118,7 @@ func newApp(ctx context.Context, cfg *config.Config, stdout io.Writer, environ [
 		return nil, err
 	}
 
-	app.modules = []Module{identity}
+	app.modules = []Module{ssiAuthModule}
 
 	for _, module := range app.modules {
 		for name, check := range module.Checks() {

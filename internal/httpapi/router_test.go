@@ -64,7 +64,14 @@ func TestModuleRoutesStayUnderTheirPrefix(t *testing.T) {
 		mounted[route.Path] = true
 	}
 
-	for _, path := range []string{"/healthz", "/readyz", "/ssi-auth/wallet/did", "/.well-known/did.json"} {
+	for _, path := range []string{
+		"/healthz",
+		"/readyz",
+		httpapi.APIPrefix + "/ssi-auth/wallet/did",
+		// Fixed by specification at the root of the origin: versioning it
+		// would make it unresolvable.
+		"/.well-known/did.json",
+	} {
 		if !mounted[path] {
 			t.Errorf("route %s is not mounted", path)
 		}

@@ -104,8 +104,12 @@ func (m *Module) Name() string { return Name }
 // Wallet exposes the use cases, for a caller that needs them directly.
 func (m *Module) Wallet() *wallet.Service { return m.wallet }
 
-// Register mounts the context's HTTP surface.
-func (m *Module) Register(engine *gin.Engine) { m.router.Register(engine) }
+// Register mounts the context's HTTP surface under the versioned API group.
+func (m *Module) Register(api *gin.RouterGroup) { m.router.Register(api) }
+
+// RegisterRoot mounts the routes a specification pins to the root of the
+// origin, outside any version prefix.
+func (m *Module) RegisterRoot(engine *gin.Engine) { m.router.RegisterRoot(engine) }
 
 // Checks are the context's contributions to readiness. The names are what an
 // operator reads off the probe, so they say what is missing, not which package
