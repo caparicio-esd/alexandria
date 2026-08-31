@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/caparicio-esd/alexandria/internal/common"
 	"github.com/caparicio-esd/alexandria/internal/ssi-auth/wallet"
@@ -49,6 +50,37 @@ func newDidResp(d wallet.Did) didResp {
 }
 
 // ===== KEY rest DTOs =========================================================
+
+// keyResp is the public representation of a wallet key.
+type keyResp struct {
+	ID        string    `json:"id"`
+	Alias     string    `json:"alias,omitempty"`
+	Kty       string    `json:"kty"`
+	Crv       *string   `json:"crv,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// newKeyResp projects a domain key onto the wire.
+func newKeyResp(k wallet.Key) keyResp {
+	return keyResp{
+		ID:        k.ID,
+		Alias:     k.Alias,
+		Kty:       k.Kty,
+		Crv:       k.Crv,
+		CreatedAt: k.CreatedAt,
+	}
+}
+
+// newKeyResps projects a list of domain keys, never nil: an empty wallet is an
+// empty JSON array, not null.
+func newKeyResps(keys []wallet.Key) []keyResp {
+	out := make([]keyResp, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, newKeyResp(k))
+	}
+
+	return out
+}
 
 type registerKeyReq struct {
 	ID    *string `json:"id,omitempty"`

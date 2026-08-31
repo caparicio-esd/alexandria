@@ -130,13 +130,21 @@ func (s *Service) RegisterKey(ctx context.Context, pem string, alias *string, id
 }
 
 // DeleteKey purges a key, provided no DID still references it.
-func (s *Service) DeleteKey(_ context.Context, _ string) error {
-	panic("wallet: DeleteKey not implemented")
+func (s *Service) DeleteKey(c context.Context, keyId string) error {
+	err := s.wallet.DeleteKey(c, keyId)
+	if err != nil {
+		return fmt.Errorf("wallet reported error by deleting keys: %w", err)
+	}
+	return nil
 }
 
 // Keys lists every keypair held by the wallet.
-func (s *Service) Keys(_ context.Context) ([]Key, error) {
-	panic("wallet: Keys not implemented")
+func (s *Service) Keys(c context.Context) ([]Key, error) {
+	keys, err := s.wallet.GetAllKeys(c)
+	if err != nil {
+		return []Key{}, fmt.Errorf("wallet reported error by fetching keys: %w", err)
+	}
+	return keys, nil
 }
 
 // ===== DIDs ==================================================================
@@ -205,8 +213,12 @@ func (s *Service) DidDoc(_ context.Context) (did.Doc, error) {
 }
 
 // DeleteDid drops a DID and its verification method bindings.
-func (s *Service) DeleteDid(_ context.Context, _ string) error {
-	panic("wallet: DeleteDid not implemented")
+func (s *Service) DeleteDid(c context.Context, didId string) error {
+	err := s.wallet.DeleteDid(c, didId)
+	if err != nil {
+		return fmt.Errorf("wallet reported error by deleting dids: %w", err)
+	}
+	return nil
 }
 
 // SetDefaultDid promotes a DID to be the wallet primary identity.

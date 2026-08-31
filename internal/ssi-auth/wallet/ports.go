@@ -20,8 +20,14 @@ type Wallet interface {
 	Link(ctx context.Context) (Did, error)
 	// RegisterKey files raw key material under the path the plan names.
 	RegisterKey(ctx context.Context, keyPlan *KeyPlan) error
+	// Get all keys
+	GetAllKeys(ctx context.Context) ([]Key, error)
+	// Delete key
+	DeleteKey(ctx context.Context, keyId string) error
 	// Registers did
 	RegisterDid(ctx context.Context, didPlan *DidPlan) error
+	// Delete did
+	DeleteDid(ctx context.Context, keyId string) error
 }
 
 // ===== Pem Descriptor ===========================================

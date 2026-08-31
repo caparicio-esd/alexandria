@@ -15,9 +15,12 @@ const testPem = "-----BEGIN PRIVATE KEY-----\nMC4=\n-----END PRIVATE KEY-----\n"
 // stubWallet stands in for the outsourced wallet. It records the plan it was
 // handed, which is the whole point: RegisterKey's job is minting that plan.
 type stubWallet struct {
-	gotPlan    *wallet.KeyPlan
-	gotDidPlan *wallet.DidPlan
-	err        error
+	gotPlan      *wallet.KeyPlan
+	gotDidPlan   *wallet.DidPlan
+	gotDeleteKey *string
+	gotDeleteDid *string
+	keys         []wallet.Key
+	err          error
 }
 
 func (s *stubWallet) Link(context.Context) (wallet.Did, error) {
@@ -26,6 +29,26 @@ func (s *stubWallet) Link(context.Context) (wallet.Did, error) {
 
 func (s *stubWallet) RegisterKey(_ context.Context, plan *wallet.KeyPlan) error {
 	s.gotPlan = plan
+
+	return s.err
+}
+
+func (s *stubWallet) GetAllKeys(context.Context) ([]wallet.Key, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return s.keys, nil
+}
+
+func (s *stubWallet) DeleteKey(_ context.Context, keyID string) error {
+	s.gotDeleteKey = &keyID
+
+	return s.err
+}
+
+func (s *stubWallet) DeleteDid(_ context.Context, didID string) error {
+	s.gotDeleteDid = &didID
 
 	return s.err
 }
@@ -240,6 +263,160 @@ func TestRegisterKeyWrapsWalletErrors(t *testing.T) {
 	svc := wallet.NewService(stub, usableKey("conflicting"), nil, nil)
 
 	err := svc.RegisterKey(t.Context(), testPem, nil, nil)
+	if !errors.Is(err, common.ErrConflict) {
+		t.Errorf("error = %v, want it to match %v", err, common.ErrConflict)
+	}
+}
+
+// ===== Keys listing ==========================================================
+
+// TestKeysPassesTheWalletInventoryThrough pins that listing is a pass-through:
+// the use case adds no rules of its own, so whatever the wallet holds is what
+// the caller sees, in the order the wallet stated it.
+func TestKeysPassesTheWalletInventoryThrough(t *testing.T) {
+	t.Parallel()
+
+	crv := "Ed25519"
+	stub := &stubWallet{keys: []wallet.Key{
+		{ID: "first.json", Alias: "signing", Kty: "OKP", Crv: &crv},
+		{ID: "second.json", Alias: "", Kty: "RSA", Crv: nil},
+	}}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	keys, err := svc.Keys(t.Context())
+	if err != nil {
+		t.Fatalf("Keys: %v", err)
+	}
+
+	if len(keys) != len(stub.keys) {
+		t.Fatalf("got %d keys, want %d", len(keys), len(stub.keys))
+	}
+
+	for i, want := range stub.keys {
+		if keys[i].ID != want.ID || keys[i].Alias != want.Alias || keys[i].Kty != want.Kty {
+			t.Errorf("keys[%d] = %+v, want %+v", i, keys[i], want)
+		}
+	}
+}
+
+// TestKeysOnAnEmptyWallet keeps "no keys" from reading as a failure: an empty
+// vault is a legitimate state, and the REST layer renders it as an empty array.
+func TestKeysOnAnEmptyWallet(t *testing.T) {
+	t.Parallel()
+
+	svc := wallet.NewService(&stubWallet{}, usableKey("unused"), nil, nil)
+
+	keys, err := svc.Keys(t.Context())
+	if err != nil {
+		t.Fatalf("Keys: %v", err)
+	}
+
+	if len(keys) != 0 {
+		t.Errorf("got %d keys, want none", len(keys))
+	}
+}
+
+// TestKeysWrapsWalletErrors keeps the sentinel reachable, so an unreachable
+// wallet is not reported as an empty one.
+func TestKeysWrapsWalletErrors(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubWallet{err: common.ErrNotFound}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	keys, err := svc.Keys(t.Context())
+	if !errors.Is(err, common.ErrNotFound) {
+		t.Fatalf("error = %v, want it to match %v", err, common.ErrNotFound)
+	}
+
+	if len(keys) != 0 {
+		t.Errorf("got %d keys alongside an error, want none", len(keys))
+	}
+}
+
+// ===== Key deletion ==========================================================
+
+// TestDeleteKeyReachesTheWallet pins the identifier the use case forwards: the
+// wallet files material under that exact path, so a rewritten id deletes either
+// nothing or the wrong key.
+func TestDeleteKeyReachesTheWallet(t *testing.T) {
+	t.Parallel()
+
+	const keyID = "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs.json"
+
+	stub := &stubWallet{}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	if err := svc.DeleteKey(t.Context(), keyID); err != nil {
+		t.Fatalf("DeleteKey: %v", err)
+	}
+
+	if stub.gotDeleteKey == nil {
+		t.Fatal("the wallet was never called")
+	}
+
+	if *stub.gotDeleteKey != keyID {
+		t.Errorf("deleted %q, want %q", *stub.gotDeleteKey, keyID)
+	}
+
+	if stub.gotDeleteDid != nil {
+		t.Error("deleting a key reached the did endpoint")
+	}
+}
+
+// TestDeleteKeyWrapsWalletErrors keeps the sentinel reachable, so deleting a key
+// that is not there still renders a 404 rather than a 500.
+func TestDeleteKeyWrapsWalletErrors(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubWallet{err: common.ErrNotFound}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	err := svc.DeleteKey(t.Context(), "missing.json")
+	if !errors.Is(err, common.ErrNotFound) {
+		t.Errorf("error = %v, want it to match %v", err, common.ErrNotFound)
+	}
+}
+
+// ===== DID deletion ==========================================================
+
+// TestDeleteDidReachesTheDidEndpoint is the reason this test exists: keys and
+// DIDs are two different collections in the wallet, and forwarding a DID to the
+// key endpoint silently deletes nothing while reporting success.
+func TestDeleteDidReachesTheDidEndpoint(t *testing.T) {
+	t.Parallel()
+
+	const didID = "did:web:alexandria.upm.es"
+
+	stub := &stubWallet{}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	if err := svc.DeleteDid(t.Context(), didID); err != nil {
+		t.Fatalf("DeleteDid: %v", err)
+	}
+
+	if stub.gotDeleteKey != nil {
+		t.Errorf("deleting a did deleted the key %q instead", *stub.gotDeleteKey)
+	}
+
+	if stub.gotDeleteDid == nil {
+		t.Fatal("the wallet was never called")
+	}
+
+	if *stub.gotDeleteDid != didID {
+		t.Errorf("deleted %q, want %q", *stub.gotDeleteDid, didID)
+	}
+}
+
+// TestDeleteDidWrapsWalletErrors keeps the sentinel reachable through the use
+// case.
+func TestDeleteDidWrapsWalletErrors(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubWallet{err: common.ErrConflict}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	err := svc.DeleteDid(t.Context(), "did:web:alexandria.upm.es")
 	if !errors.Is(err, common.ErrConflict) {
 		t.Errorf("error = %v, want it to match %v", err, common.ErrConflict)
 	}

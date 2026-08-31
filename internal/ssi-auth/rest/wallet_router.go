@@ -41,17 +41,17 @@ func NewWalletRouter(holder *wallet.Service) *WalletRouter {
 func (r *WalletRouter) Register(parent *gin.RouterGroup) *gin.RouterGroup {
 	walletRouter := parent.Group("/wallet")
 
-	walletRouter.GET("/is-linked", r.isLinked)
-	walletRouter.POST("/link", r.link)
+	walletRouter.GET("/is-linked", r.isLinked) // ok
+	walletRouter.POST("/link", r.link)         // ok
 
-	walletRouter.POST("/key", r.registerKey)
-	walletRouter.GET("/keys", r.getWalletKeys)
-	walletRouter.DELETE("/key/:id", r.deleteKey)
+	walletRouter.POST("/keys", r.registerKey)     // ok
+	walletRouter.GET("/keys", r.getWalletKeys)    // ok
+	walletRouter.DELETE("/keys/:id", r.deleteKey) // ok
 
 	didRouter := walletRouter.Group("/did")
-	didRouter.GET("", r.getWalletDid)
-	didRouter.POST("", r.registerDid)
-	didRouter.DELETE("/:id", r.deleteDid)
+	didRouter.GET("", r.getWalletDid)     // ok
+	didRouter.POST("", r.registerDid)     // ok
+	didRouter.DELETE("/:id", r.deleteDid) // ok
 	didRouter.POST("/:id/default", r.setDefaultDid)
 	didRouter.POST("/:id/key/:key_id", r.addKeyToDid)
 	didRouter.DELETE("/:id/key/:key_id", r.removeKeyFromDid)
@@ -118,9 +118,24 @@ func (r *WalletRouter) registerKey(c *gin.Context) {
 	c.Status(http.StatusCreated)
 }
 
-func (r *WalletRouter) deleteKey(_ *gin.Context) {}
+func (r *WalletRouter) deleteKey(c *gin.Context) {
+	keyId := c.Params.ByName("id")
+	err := r.holder.DeleteKey(c, keyId)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
 
-func (r *WalletRouter) getWalletKeys(_ *gin.Context) {}
+func (r *WalletRouter) getWalletKeys(c *gin.Context) {
+	keys, err := r.holder.Keys(c)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newKeyResps(keys))
+}
 
 func (r *WalletRouter) registerDid(c *gin.Context) {
 	var req registerDidReq
@@ -181,7 +196,15 @@ func (r *WalletRouter) getDidDoc(c *gin.Context) {
 	c.JSON(http.StatusOK, &doc)
 }
 
-func (r *WalletRouter) deleteDid(_ *gin.Context) {}
+func (r *WalletRouter) deleteDid(c *gin.Context) {
+	keyId := c.Params.ByName("id")
+	err := r.holder.DeleteDid(c, keyId)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
 
 func (r *WalletRouter) setDefaultDid(_ *gin.Context) {}
 

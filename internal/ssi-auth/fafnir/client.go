@@ -132,6 +132,80 @@ func (a *Adapter) RegisterKey(ctx context.Context, keyPlan *wallet.KeyPlan) erro
 	return nil
 }
 
+// GetAllKeys lists every key the wallet holds. It satisfies the wallet.Wallet
+// port.
+func (a *Adapter) GetAllKeys(ctx context.Context) ([]wallet.Key, error) {
+	const path = "/keys/all"
+
+	var out []keyResp
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		SetResult(&out).
+		Get(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodGet, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return nil, fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodGet, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return nil, statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	// send back to domain
+	keys := make([]wallet.Key, 0, len(out))
+	for _, k := range out {
+		key, err := k.ToDomain()
+		if err != nil {
+			return nil, err
+		}
+
+		keys = append(keys, key)
+	}
+
+	return keys, nil
+}
+
+func (a *Adapter) DeleteKey(ctx context.Context, keyId string) error {
+	path := fmt.Sprintf("/keys/%s", keyId)
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		Delete(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodDelete, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodDelete, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	return nil
+}
+
 // RegisterDid asks the wallet to mint a DID from the given builder and bind the
 // referenced keys into it, returning the identifier it minted.
 func (a *Adapter) RegisterDid(
@@ -173,6 +247,35 @@ func (a *Adapter) RegisterDid(
 	}
 
 	//
+	return nil
+}
+
+func (a *Adapter) DeleteDid(ctx context.Context, keyId string) error {
+	path := fmt.Sprintf("/dids/%s", keyId)
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		Delete(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodDelete, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodDelete, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return statusError(res.StatusCode(), path, res.Bytes())
+	}
+
 	return nil
 }
 
