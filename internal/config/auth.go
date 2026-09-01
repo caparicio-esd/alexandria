@@ -139,7 +139,10 @@ func (a *Auth) Validate(isProd bool) error {
 	}
 
 	if a.ClientID == "" {
-		errs = append(errs, invalid("auth_config.client_id", "must be set"))
+		// The remedy is named because the value cannot be invented: the
+		// provider generates it, so no committed file can carry one that works.
+		errs = append(errs, invalid("auth_config.client_id",
+			`must be set — "task auth:bootstrap" registers the application and writes it to .env`))
 	}
 
 	if isProd && a.ClientSecret == "" {

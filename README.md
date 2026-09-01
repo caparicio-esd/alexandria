@@ -4,8 +4,10 @@ A vocabulary hub for a dataspace.
 
 **Current state:** the identity and authorization layer is what exists today.
 The node holds a decentralised identifier, serves the DID Document that makes it
-resolvable, and delegates key material to an external wallet. The vocabulary
-work comes next, as a second bounded context alongside it.
+resolvable, and delegates key material to an external wallet. Access to its API
+is closed behind a Zitadel the caller never addresses directly — see
+[Authentication](#authentication). The vocabulary work comes next, as a second
+bounded context alongside it.
 
 ## Requirements
 
@@ -32,11 +34,11 @@ task db:reset       # destroy the volume and start over
 task db:psql        # a psql shell on it
 task db:logs        # follow its logs
 
-task auth:up        # start the local Zitadel and wait for it to answer
+task auth:bootstrap # start Zitadel, provision it, and write .env
+task auth:reset     # destroy it and provision a fresh one
+task auth:up        # just start it
 task auth:down      # stop it, keeping its data
-task auth:reset     # destroy it and start over
 task auth:console   # open the Zitadel console
-task auth:key       # print a session sealing key
 task auth:logs      # follow its logs
 ```
 
@@ -156,6 +158,12 @@ configuration, no token in a browser's storage, and no second origin for a
 client to be redirected to and back from. A caller talks to `/api/v1/auth`; this
 process talks to Zitadel.
 
+That is the point of the design, not a detail of it. The provider's address, its
+client secret and its token vocabulary are deployment configuration **on this
+side only** — moving Zitadel onto a private network, or replacing it with
+another OpenID Provider, changes one YAML block and nothing any client ever
+sees.
+
 With `auth_config.enabled` on, every route under `/api/v1` is refused without a
 credential — including the ones a module mounts later, because the guard is
 installed on the versioned group itself rather than route by route. The only
@@ -172,50 +180,299 @@ which sit outside the prefix entirely.
 | `GET /api/v1/auth/session` | Who the caller is, with no token in the answer. |
 | `GET /api/v1/auth/userinfo` | The provider's own view of the caller. |
 
+### The flow
+
+```
+browser                     alexandria                    zitadel
+   │  GET /api/v1/auth/login    │                            │
+   ├───────────────────────────►│  mint state, nonce, pkce   │
+   │  302 + flow cookie (sealed)│                            │
+   │◄───────────────────────────┤                            │
+   │  GET /oauth/v2/authorize ─────────────────────────────► │
+   │◄──────────────────────────────────── 302 ?code&state ───┤
+   │  GET /api/v1/auth/callback │                            │
+   ├───────────────────────────►│  check state               │
+   │                            │  POST /oauth/v2/token ────►│
+   │                            │◄─── access + id + refresh ─┤
+   │                            │  check nonce, verify jwt   │
+   │  302 + session cookie      │                            │
+   │◄───────────────────────────┤                            │
+   │  GET /api/v1/anything      │                            │
+   ├───────────────────────────►│  open cookie, verify, 200  │
+```
+
 **The browser holds a cookie, not a token.** The tokens live inside it, sealed
 with AES-256-GCM under a key only this node has, `HttpOnly` so no script can
 read it, and stamped with an expiry inside the sealed payload rather than only
 in the `Max-Age` the browser controls. A stolen cookie is a session, not a
-bearer credential that works anywhere else — and a logout revokes at the
-provider, so it does not outlive the click.
+bearer credential that works anywhere else — and a logout revokes the refresh
+token at the provider, so it does not outlive the click.
 
-**Two credentials, one principal.** A browser presents the cookie; a peer node
-or a CLI presents `Authorization: Bearer`. Both resolve to the same
-`identity.Principal` on the request context, so a handler never learns which
-door its caller came through:
+**Four things are checked before a session exists**, and each answers a
+different attack: `state` (a callback that answers somebody else's login),
+`nonce` (an ID token minted elsewhere and replayed here), the PKCE verifier (an
+intercepted authorization code), and `return_to`, which is refused unless it is
+a path or on the configured origin — an unvalidated one turns the login into a
+phishing hop. The flow cookie carrying the first three is single-use: the
+callback clears it whether it succeeds or fails.
+
+**Sessions renew themselves.** The guard refreshes 30 seconds before the access
+token expires rather than after a call fails, so an active session never
+surfaces the token's lifetime to the user. `POST /auth/refresh` exists for a
+client that would rather drive it, and is public — by the time it is needed the
+access token is, by definition, no longer good enough to pass the guard.
+
+**Verification is local.** Tokens are checked against the provider's JWKS with
+no round trip per request, the key set refreshing on its own schedule so a
+rotation needs no restart. Zitadel issues opaque access tokens unless the
+application asks for JWTs, so `auth_config.introspect` defaults to `fallback`:
+verify locally, and introspect only what is not a JWS. `always` trades a round
+trip per request for seeing a revocation the instant it happens.
+
+### Two credentials, one rule
+
+A browser presents the sealed cookie; a peer node or a CLI presents
+`Authorization: Bearer`. When both are on the same request the header wins: a
+call that presents a Bearer token is asking to be seen as that token's subject,
+even from a browser holding a session for somebody else.
+
+Getting either one is [From nothing to a token](#from-nothing-to-a-token),
+below.
+
+### In a handler
+
+Both credentials resolve to the same `identity.Principal` on the request
+context, so a handler never learns which door its caller came through:
 
 ```go
 principal := identity.FromContext(c.Request.Context())
+principal.Subject      // the provider's stable id for the caller
+principal.Roles        // flattened out of whatever shape the provider used
+principal.Machine      // a service account, with no human behind it
 ```
 
-Tokens are verified locally against the provider's JWKS — no round trip per
-request — with the key set refreshed on its own schedule. Zitadel issues opaque
-access tokens unless the application asks for JWTs, so `auth_config.introspect`
-defaults to `fallback`: verify locally, and introspect only what is not a JWS.
+`auth_config.required_roles` gates the whole API. A single route that needs more
+says so where it is mounted:
 
-**PKCE is used even though this node is a confidential client**, because the
-authorization code is handed to a browser and S256 is what stops an intercepted
-redirect being usable. `state` is checked, the flow cookie is single-use, and
-`return_to` is refused unless it is a path or on the configured origin — an
-unvalidated one turns the login into a phishing hop.
+```go
+admin := group.Group("/admin", rest.RequireRole("operator"))
+```
 
-### Setting it up locally
+Authorization failures are 403, never 401: logging in again would not help, and
+a client that cannot tell the two apart will loop trying.
+
+### Settings
+
+| Key | What it does |
+| --- | --- |
+| `enabled` | The whole context. Off, nothing is protected and no provider is contacted. |
+| `issuer` | The issuer every token must name. Checked against the discovery document, so a mismatch is refused rather than trusted. |
+| `internal_issuer` | Where *this process* reaches the provider, when that is not where the browser does — a container name against a published host. |
+| `client_id` / `client_secret` | This node's registered application. The secret never leaves the process. |
+| `audiences` | The `aud` an access token must carry — the Zitadel project id. Empty accepts any, which is only safe as the sole relying party. |
+| `scopes` | Requested at the authorization endpoint. `offline_access` is what earns a refresh token. |
+| `redirect_url` | This node's callback, exactly as registered in Zitadel. |
+| `app_url` / `post_logout_url` | Where the browser lands after a login, and after a logout. |
+| `introspect` | `never` \| `fallback` \| `always`. See above. |
+| `roles_claim` / `required_roles` | Where roles live, and which ones gate the whole API. |
+| `jwks_refresh` / `http_timeout` | How often signing keys are re-read, and the bound on every provider call. |
+| `startup_discovery_timeout` | How long startup blocks on the provider before continuing in the background. |
+| `session.*` | The cookie: `name`, `domain`, `path`, `secure`, `same_site`, `ttl`, and the 32-byte `key` that seals it. |
+
+The rules tighten in production — `common_config.connection.is_prod` — where a
+missing `session.key`, a cookie without `secure`, or a client with no secret are
+startup errors rather than warnings. A key left empty outside production mints a
+random one per process, which means every restart ends every session; that is
+the point, since a process that generates its own key must not be one anybody
+depends on.
+
+### From nothing to a token
+
+The whole procedure, start to finish. Step 2 is the only one you need on a
+machine that has never run this.
+
+**1. Tear it down** — only the auth stack; the node's own Postgres holds none of
+this:
 
 ```bash
-task auth:up        # Zitadel on http://127.0.0.1:1600
-task auth:console   # admin@alexandria.127.0.0.1.nip.io / Password1!
+docker compose rm -sfv zitadel zitadel-db zitadel-init
+docker volume rm -f alexandria_zitadel-data alexandria_zitadel-machinekey
+rm -f .env
 ```
 
-In the console: create a project, then a **Web** application in it with
-authentication method **CODE**, redirect URI
-`http://127.0.0.1:1200/api/v1/auth/callback`, and — under the application's
-token settings — *user roles inside ID token* and *user info inside ID token*,
-so roles reach this node. Then fill `client_id`, `client_secret` and a
-`session.key` (`task auth:key`) into `auth_config` and set `enabled: true`.
+**2. Bring it up:**
 
-A node whose provider is unreachable answers **503, not 401**: telling a client
-its perfectly good credential is bad would have it throw the session away over
-an outage that is about to clear.
+```bash
+task auth:bootstrap
+```
+
+Which is two things. `task auth:up` starts Zitadel on `127.0.0.1:1600` and waits
+for it to answer — on an empty database it migrates, creates the organization,
+the console user, and a machine user whose personal access token it writes into
+a volume. Then the bootstrap copies that token out and uses it to create the
+project, the application, a `reader` role, and a service account, writing every
+credential to `.env`:
+
+```console
+project    alexandria (388876013762772995) created
+app        alexandria-node (388876013880213507) created
+role       reader granted to the console user
+service    alexandria-service (388876343518953475) created
+client id  388876013880279043
+written    .env
+```
+
+`task auth:reset` is steps 1 and 2 in one command.
+
+**3. Start the node.** Task loads `.env`, so there is nothing to export:
+
+```bash
+task dev
+```
+
+**4. Check it came up authenticated:**
+
+```console
+$ curl -s localhost:1234/readyz | jq -c '.checks.identity_provider'
+{"status":"ok"}
+
+$ curl -s -o /dev/null -w '%{http_code}\n' localhost:1234/api/v1/ssi-auth/wallet/did
+401
+```
+
+A 401 there is the point of the exercise. If it is 503, the node has not reached
+Zitadel yet.
+
+### Logging in — a human
+
+Open the login route in a browser. There is no curl equivalent, because the
+password is typed into Zitadel's own form and this node never sees it:
+
+```
+http://127.0.0.1:1234/api/v1/auth/login
+```
+
+The default credentials are `admin@alexandria.127.0.0.1` / `Password1!` — the
+username follows `ZITADEL_ADMIN_USER` and `ZITADEL_DOMAIN`. Zitadel will ask to
+set up MFA on first login; skipping is fine locally.
+
+You land back on `app_url` with the session cookie set. From then on the browser
+carries it and nothing else:
+
+```console
+$ curl -sb "alexandria_session=<the cookie>" localhost:1234/api/v1/auth/session
+{"subject":"388876…","username":"admin@alexandria.127.0.0.1","roles":["reader"],"machine":false,…}
+```
+
+The cookie is `HttpOnly`, so it is not readable from the console's JavaScript —
+copy it from the network tab or the storage inspector if you want to drive the
+API from a terminal. `POST /api/v1/auth/logout` ends it here and revokes it at
+Zitadel.
+
+### Logging in — a machine
+
+No browser, no cookie, and still no Zitadel: the service account posts its
+credentials to this node, which relays them.
+
+```bash
+set -a; . ./.env; set +a          # or just run it under `task`
+
+token=$(curl -s -X POST localhost:1234/api/v1/auth/token \
+  -d "client_id=$ZITADEL_M2M_CLIENT_ID" \
+  -d "client_secret=$ZITADEL_M2M_CLIENT_SECRET" | jq -r .access_token)
+
+curl -s -H "Authorization: Bearer $token" localhost:1234/api/v1/auth/session
+```
+
+```json
+{"subject":"388876343518953475","machine":true,"roles":[],"scopes":[]}
+```
+
+`machine: true` is the node reporting a token with no human behind it. The empty
+roles are worth knowing about: the service account **is** granted `reader` in
+Zitadel — `task auth:bootstrap` does it, and the console shows the grant — but
+Zitadel does not assert project roles into a client credentials token in this
+configuration. Gate machine callers on the subject or on `machine` for now;
+`required_roles` bites on human sessions.
+
+Those credentials are the service account's own. A peer node in the dataspace
+gets its own service account, and this node never learns its secret.
+
+### What `.env` holds
+
+```bash
+ALEXANDRIA_AUTH_CONFIG_ENABLED=true          # read by the node
+ALEXANDRIA_AUTH_CONFIG_ISSUER=…
+ALEXANDRIA_AUTH_CONFIG_CLIENT_ID=…           # generated by Zitadel
+ALEXANDRIA_AUTH_CONFIG_CLIENT_SECRET=…
+ALEXANDRIA_AUTH_CONFIG_SESSION_KEY=…         # seals the session cookie
+ZITADEL_M2M_CLIENT_ID=…                      # read by nothing; for you
+ZITADEL_M2M_CLIENT_SECRET=…
+```
+
+The first five override `auth_config` in `config/config.yaml` by the usual
+`ALEXANDRIA_` + dotted-path rule. The file is gitignored: settings live in the
+committed YAML, secrets live here.
+
+Re-running the bootstrap is safe. It finds what exists, mints fresh secrets —
+which is also how you recover one that was lost, since Zitadel shows them only
+at creation — and keeps the session key, so open sessions survive.
+
+### When it goes wrong
+
+| Symptom | Cause |
+| --- | --- |
+| `Errors.App.NotFound` at Zitadel | The `client_id` does not exist there. Usually a `.env` from an instance that was since reset — re-run `task auth:bootstrap` and restart the node. |
+| The node refuses to start, naming `auth_config.client_id` | No `.env`. Run `task auth:bootstrap`. |
+| `No personal access token found` | The instance predates the machine user. `task auth:reset`, or pass `ZITADEL_PAT=…`. |
+| Every route answers 503 | The node has not reached Zitadel. It keeps retrying; check `task auth:logs`. |
+| A running `task dev` still fails after a reset | It holds the old `.env` in its environment. Restart it. |
+
+### Doing it by hand
+
+Without the script: in the console, create a project, then a **Web** application
+with authentication method **CODE**, redirect URI
+`http://127.0.0.1:1234/api/v1/auth/callback`, **Development Mode** on so a
+plain-http URI is accepted, and *user roles inside ID token* under its token
+settings. Copy the generated client id and secret into `.env`. For the machine
+flow, add a service user and generate a client secret for it.
+
+Every value the Zitadel containers read is overridable the way the Postgres ones
+are — `ZITADEL_VERSION`, `ZITADEL_DB_USER`, `ZITADEL_DB_PASSWORD`,
+`ZITADEL_DB_NAME`, `ZITADEL_MASTERKEY`, `ZITADEL_DOMAIN`, `ZITADEL_PORT`,
+`ZITADEL_ORG`, `ZITADEL_ADMIN_USER`, `ZITADEL_ADMIN_PASSWORD` — so a second
+checkout runs its own without editing the file. Moving the domain or the port
+means moving `auth_config.issuer` with it, or discovery is refused:
+
+```bash
+ZITADEL_PORT=1700 docker compose up -d --wait zitadel
+ALEXANDRIA_AUTH_CONFIG_ISSUER=http://127.0.0.1:1700 task auth:bootstrap
+```
+
+### When the provider is down
+
+The node comes up anyway. It reports itself not ready, keeps retrying on a
+capped backoff, and clears the check by itself once Zitadel answers — the same
+posture as the wallet and the database, for the same reason: refusing to start
+turns one outage into a restart loop.
+
+While it is down the guard answers **503, not 401**. Telling a client its
+perfectly good credential is bad would have it throw the session away over an
+outage that is about to clear.
+
+```console
+$ curl -s localhost:1200/readyz | jq -c '.checks.identity_provider'
+{"status":"failing","error":"identity provider not reached: not ready"}
+```
+
+The startup report says which provider the node loaded, and says plainly when it
+loaded none — a node with an open API is the one fact nobody should have to
+infer:
+
+```
+auth      http://127.0.0.1:1600 · client alexandria
+auth      disabled · api open
+```
 
 ## Startup
 
@@ -225,6 +482,12 @@ budget it comes up anyway, reports itself not ready and keeps trying in the
 background: a node and its wallet usually start together, so a short wait
 catches the common case, while refusing to start would only produce a restart
 loop.
+
+The identity provider is acquired the same way, on
+`auth_config.startup_discovery_timeout`, and so is the database connection. One
+posture for all three dependencies: block briefly, then come up degraded and say
+so through readiness. Nothing this node talks to is a reason to refuse to
+start.
 
 ## Observability
 

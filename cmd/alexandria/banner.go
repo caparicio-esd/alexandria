@@ -71,6 +71,7 @@ func (r *report) summary(version string, cfg *config.Config) error {
 		row("node", cfg.Common.Hosts.HTTP.URL()),
 		row("api", cfg.Common.API.Prefix()),
 		row("wallet", string(cfg.Wallet.Kind)+" · "+walletURL),
+		row("auth", authSummary(cfg.Auth)),
 		row("database", databaseSummary(cfg.Common.DB)),
 		row("did", string(cfg.Did.Method)),
 		row("policy", policySummary(cfg.Verify)),
@@ -112,6 +113,7 @@ func summaryAttrs(cfg *config.Config) []any {
 		"api", cfg.Common.API.Prefix(),
 		"wallet", string(cfg.Wallet.Kind),
 		"wallet_url", walletURL,
+		"auth", authSummary(cfg.Auth),
 		"database", databaseSummary(cfg.Common.DB),
 		"did_method", string(cfg.Did.Method),
 		"policy", policySummary(cfg.Verify),
@@ -153,6 +155,36 @@ func shortenDid(id string) string {
 	}
 
 	return id[:head] + "…" + id[len(id)-tail:]
+}
+
+// authSummary describes the authentication boundary in one line.
+//
+// The disabled case says what that means rather than just "disabled": a node
+// with an open API is the one fact on this table nobody should have to infer,
+// and reading it in the startup report is how somebody catches a deployment
+// that shipped with the development posture.
+func authSummary(auth config.Auth) string {
+	if !auth.Enabled {
+		return "disabled · api open"
+	}
+
+	parts := []string{auth.Issuer}
+
+	if auth.ClientID != "" {
+		parts = append(parts, "client "+auth.ClientID)
+	}
+
+	// Only when it is not the default: a report that spells out every setting
+	// is a report nobody reads.
+	if auth.Introspect != config.IntrospectFallback {
+		parts = append(parts, "introspect "+string(auth.Introspect))
+	}
+
+	if len(auth.RequiredRoles) > 0 {
+		parts = append(parts, "roles "+strings.Join(auth.RequiredRoles, ","))
+	}
+
+	return strings.Join(parts, " · ")
 }
 
 // databaseSummary describes the store in one line.

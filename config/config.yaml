@@ -22,7 +22,7 @@ common_config:
     http:
       protocol: "http"
       url: "127.0.0.1"
-      port: "1200"
+      port: "1234"
       internal_port: null
     grpc: null
     graphql: null
@@ -65,21 +65,11 @@ wallet_config:
 # it goes to /api/v1/auth/login, comes back through /api/v1/auth/callback, and
 # carries a sealed HttpOnly cookie from then on.
 #
-# Off in this file so a fresh checkout runs with no identity provider. To turn
-# it on:
-#
-#   1. task auth:up                      Zitadel on http://127.0.0.1:1600
-#   2. log in at /ui/console as admin@alexandria.127.0.0.1.nip.io / Password1!
-#   3. create a project, then a Web application in it, with:
-#        authentication method: CODE  (with PKCE)
-#        redirect uri:          http://127.0.0.1:1200/api/v1/auth/callback
-#        post logout uri:       http://127.0.0.1:1200/
-#      and, under its token settings, "user roles inside ID token" plus
-#      "user info inside ID token" so roles reach this node.
-#   4. paste the client id and secret below, set enabled: true
-#   5. task auth:key, and paste the result into session.key
+# `task auth:bootstrap` sets it up: it starts Zitadel, registers this node as an
+# application, and writes the credentials to .env, which Task loads. The
+# settings live here; the secrets live there, because this file is committed.
 auth_config:
-  enabled: false
+  enabled: true
   # The issuer every token names. It must be exactly what Zitadel's discovery
   # document reports, or the handshake is refused rather than trusted.
   issuer: "http://127.0.0.1:1600"
@@ -87,6 +77,11 @@ auth_config:
   # browser uses — "http://zitadel:8080" from inside the compose network. Empty
   # means they are the same, which is the case for a loopback run.
   internal_issuer: ""
+  # Zitadel generates the client id — it looks like "340710279344259073", it
+  # cannot be chosen, and it differs on every instance — so there is no value
+  # here that works out of the box. `task auth:bootstrap` creates the
+  # application and writes both of these into .env, which Task loads; leaving
+  # them empty here is the normal state.
   client_id: ""
   client_secret: ""
   # The "aud" values an access token must carry. Empty accepts any audience,
@@ -94,9 +89,9 @@ auth_config:
   # the value to put here is the project id.
   audiences: []
   scopes: ["openid", "profile", "email", "offline_access"]
-  redirect_url: "http://127.0.0.1:1200/api/v1/auth/callback"
+  redirect_url: "http://127.0.0.1:1234/api/v1/auth/callback"
   # Where the browser lands once a login completes, and after a logout.
-  app_url: "http://127.0.0.1:1200/"
+  app_url: "http://127.0.0.1:1234/"
   post_logout_url: ""
   # never | fallback | always. Zitadel issues opaque access tokens unless the
   # application asks for JWTs; fallback verifies a JWT locally and introspects
@@ -121,9 +116,9 @@ auth_config:
     secure: false
     same_site: "lax"
     ttl: "12h"
-    # 32 bytes of hex or base64 — task auth:key prints one. Empty is tolerated
-    # here and refused in production: the node then seals with a random key and
-    # every restart ends every session.
+    # 32 bytes of hex or base64, written to .env by `task auth:bootstrap`.
+    # Empty is tolerated here and refused in production: the node then seals
+    # with a random key, and every restart ends every session.
     key: ""
 
 observability:

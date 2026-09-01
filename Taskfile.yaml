@@ -7,6 +7,11 @@ version: "3"
 env:
   GOFLAGS: -tags=jwx_es256k
 
+# Written by `task auth:bootstrap`, and absent until it runs: it carries the
+# client secret and the session key, which is why it is generated rather than
+# committed. Task tolerates it not existing.
+dotenv: [".env"]
+
 vars:
   BIN: alexandria
   MAIN: ./cmd/alexandria
@@ -74,6 +79,11 @@ tasks:
     desc: Start the local Zitadel and wait for it to answer.
     cmds: ["docker compose up -d --wait zitadel"]
 
+  auth:bootstrap:
+    desc: Create the Zitadel project and application, and write .env.
+    deps: [auth:up]
+    cmds: ["bash scripts/zitadel-bootstrap.sh"]
+
   auth:down:
     desc: Stop the local Zitadel, keeping its data.
     cmds: ["docker compose stop zitadel zitadel-db"]
@@ -82,9 +92,13 @@ tasks:
     desc: Destroy the local Zitadel and its data, then start it again.
     prompt: This deletes every user, project and application in the local Zitadel. Continue?
     cmds:
-      - docker compose rm -sfv zitadel zitadel-db
-      - docker volume rm -f alexandria_zitadel-data
-      - task: auth:up
+      - docker compose rm -sfv zitadel zitadel-db zitadel-init
+      # Compose prefixes a volume with the project, which is the directory name
+      # unless COMPOSE_PROJECT_NAME says otherwise. Spelling the default here
+      # rather than hard-coding "alexandria" keeps a renamed checkout working.
+      - docker volume rm -f ${COMPOSE_PROJECT_NAME:-alexandria}_zitadel-data ${COMPOSE_PROJECT_NAME:-alexandria}_zitadel-machinekey
+      - rm -f .env
+      - task: auth:bootstrap
 
   auth:logs:
     desc: Follow the local Zitadel logs.
@@ -93,10 +107,6 @@ tasks:
   auth:console:
     desc: Open the Zitadel console in the browser.
     cmds: ["open http://127.0.0.1:1600/ui/console"]
-
-  auth:key:
-    desc: Print a session sealing key for auth_config.session.key.
-    cmds: ["openssl rand -hex 32"]
 
   tidy:
     desc: Sync go.mod and go.sum.
