@@ -10,7 +10,7 @@ work comes next, as a second bounded context alongside it.
 ## Requirements
 
 - Go 1.26 or later
-- Docker, for the local Postgres
+- Docker, for the local Postgres and Zitadel
 - [Task](https://taskfile.dev) (optional, for the shortcuts)
 - A Fafnir wallet reachable over HTTP
 
@@ -31,6 +31,13 @@ task db:down        # stop it, keeping the data
 task db:reset       # destroy the volume and start over
 task db:psql        # a psql shell on it
 task db:logs        # follow its logs
+
+task auth:up        # start the local Zitadel and wait for it to answer
+task auth:down      # stop it, keeping its data
+task auth:reset     # destroy it and start over
+task auth:console   # open the Zitadel console
+task auth:key       # print a session sealing key
+task auth:logs      # follow its logs
 ```
 
 Without Task:
@@ -122,6 +129,7 @@ $ curl -s localhost:1200/readyz | jq -c '.checks.database'
 | --- | --- | --- |
 | `/healthz` | api | Liveness. Checks nothing external: a failure means restart me. |
 | `/readyz` | api | Readiness. Runs the dependency checks and names the failing one. |
+| `/api/v1/auth/*` | api | The authentication proxy. See below. |
 | `/ssi-auth/wallet/*` | api | The wallet API. |
 | `/.well-known/did.json` | api | The DID Document, as did:web resolution expects it. |
 | `/metrics` | internal | Prometheus scrape endpoint. |
@@ -139,6 +147,75 @@ worse.
 $ curl localhost:1200/readyz
 {"status":"unavailable","checks":{"wallet":{"status":"failing","error":"no identity established: not ready"}}}
 ```
+
+## Authentication
+
+Identity comes from [Zitadel](https://github.com/zitadel/zitadel), and **nothing
+outside this node ever addresses it**. There is no provider URL in a frontend's
+configuration, no token in a browser's storage, and no second origin for a
+client to be redirected to and back from. A caller talks to `/api/v1/auth`; this
+process talks to Zitadel.
+
+With `auth_config.enabled` on, every route under `/api/v1` is refused without a
+credential — including the ones a module mounts later, because the guard is
+installed on the versioned group itself rather than route by route. The only
+exceptions are the routes that exist to obtain a credential, and the probes,
+which sit outside the prefix entirely.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/v1/auth/login` | Starts the authorization code flow. Redirects, or answers `{"authorization_url": …}` with `?response=json`. |
+| `GET /api/v1/auth/callback` | Completes it, seals the session cookie, redirects to `return_to` or `app_url`. |
+| `POST /api/v1/auth/refresh` | Renews the session from its refresh token. |
+| `POST /api/v1/auth/logout` | Clears the cookie and revokes the refresh token at the provider. |
+| `POST /api/v1/auth/token` | Proxies the client credentials grant, for a service account or a peer node. |
+| `GET /api/v1/auth/session` | Who the caller is, with no token in the answer. |
+| `GET /api/v1/auth/userinfo` | The provider's own view of the caller. |
+
+**The browser holds a cookie, not a token.** The tokens live inside it, sealed
+with AES-256-GCM under a key only this node has, `HttpOnly` so no script can
+read it, and stamped with an expiry inside the sealed payload rather than only
+in the `Max-Age` the browser controls. A stolen cookie is a session, not a
+bearer credential that works anywhere else — and a logout revokes at the
+provider, so it does not outlive the click.
+
+**Two credentials, one principal.** A browser presents the cookie; a peer node
+or a CLI presents `Authorization: Bearer`. Both resolve to the same
+`identity.Principal` on the request context, so a handler never learns which
+door its caller came through:
+
+```go
+principal := identity.FromContext(c.Request.Context())
+```
+
+Tokens are verified locally against the provider's JWKS — no round trip per
+request — with the key set refreshed on its own schedule. Zitadel issues opaque
+access tokens unless the application asks for JWTs, so `auth_config.introspect`
+defaults to `fallback`: verify locally, and introspect only what is not a JWS.
+
+**PKCE is used even though this node is a confidential client**, because the
+authorization code is handed to a browser and S256 is what stops an intercepted
+redirect being usable. `state` is checked, the flow cookie is single-use, and
+`return_to` is refused unless it is a path or on the configured origin — an
+unvalidated one turns the login into a phishing hop.
+
+### Setting it up locally
+
+```bash
+task auth:up        # Zitadel on http://127.0.0.1:1600
+task auth:console   # admin@alexandria.127.0.0.1.nip.io / Password1!
+```
+
+In the console: create a project, then a **Web** application in it with
+authentication method **CODE**, redirect URI
+`http://127.0.0.1:1200/api/v1/auth/callback`, and — under the application's
+token settings — *user roles inside ID token* and *user info inside ID token*,
+so roles reach this node. Then fill `client_id`, `client_secret` and a
+`session.key` (`task auth:key`) into `auth_config` and set `enabled: true`.
+
+A node whose provider is unreachable answers **503, not 401**: telling a client
+its perfectly good credential is bad would have it throw the session away over
+an outage that is about to clear.
 
 ## Startup
 
@@ -188,6 +265,12 @@ internal/config/           Deployment document loader.
 internal/httpapi/          Process-wide HTTP boundary: the health probes.
 internal/observability/    Logging, metrics, health registry, internal listener.
 internal/storage/          Persistence infrastructure: the Postgres pool.
+internal/auth-proxy/       The authentication bounded context, and the guard:
+  identity/                  the authenticated caller, carried on the context
+  oidc/                      driven adapter, the OpenID Provider over HTTP
+  session/                   the sealed cookie the browser carries
+  token/                     credential to principal: JWKS, or introspection
+  rest/                      driving adapter, /auth and the guard middleware
 internal/ssi-auth/         The identity bounded context:
   wallet/                    domain, entities and ports — imports no framework
   fafnir/                    driven adapter, the external wallet over HTTP

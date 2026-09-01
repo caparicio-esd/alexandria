@@ -70,6 +70,34 @@ tasks:
     desc: Follow the local Postgres logs.
     cmds: ["docker compose logs -f postgres"]
 
+  auth:up:
+    desc: Start the local Zitadel and wait for it to answer.
+    cmds: ["docker compose up -d --wait zitadel"]
+
+  auth:down:
+    desc: Stop the local Zitadel, keeping its data.
+    cmds: ["docker compose stop zitadel zitadel-db"]
+
+  auth:reset:
+    desc: Destroy the local Zitadel and its data, then start it again.
+    prompt: This deletes every user, project and application in the local Zitadel. Continue?
+    cmds:
+      - docker compose rm -sfv zitadel zitadel-db
+      - docker volume rm -f alexandria_zitadel-data
+      - task: auth:up
+
+  auth:logs:
+    desc: Follow the local Zitadel logs.
+    cmds: ["docker compose logs -f zitadel"]
+
+  auth:console:
+    desc: Open the Zitadel console in the browser.
+    cmds: ["open http://127.0.0.1:1600/ui/console"]
+
+  auth:key:
+    desc: Print a session sealing key for auth_config.session.key.
+    cmds: ["openssl rand -hex 32"]
+
   tidy:
     desc: Sync go.mod and go.sum.
     cmds: ["go mod tidy"]

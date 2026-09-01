@@ -60,6 +60,72 @@ wallet_config:
   # anyway and reports itself not ready, while it keeps retrying.
   startup_link_timeout: "10s"
 
+# The authentication boundary. Everything under /api/v1 is refused without a
+# credential once this is on, and the browser never addresses Zitadel directly:
+# it goes to /api/v1/auth/login, comes back through /api/v1/auth/callback, and
+# carries a sealed HttpOnly cookie from then on.
+#
+# Off in this file so a fresh checkout runs with no identity provider. To turn
+# it on:
+#
+#   1. task auth:up                      Zitadel on http://127.0.0.1:1600
+#   2. log in at /ui/console as admin@alexandria.127.0.0.1.nip.io / Password1!
+#   3. create a project, then a Web application in it, with:
+#        authentication method: CODE  (with PKCE)
+#        redirect uri:          http://127.0.0.1:1200/api/v1/auth/callback
+#        post logout uri:       http://127.0.0.1:1200/
+#      and, under its token settings, "user roles inside ID token" plus
+#      "user info inside ID token" so roles reach this node.
+#   4. paste the client id and secret below, set enabled: true
+#   5. task auth:key, and paste the result into session.key
+auth_config:
+  enabled: false
+  # The issuer every token names. It must be exactly what Zitadel's discovery
+  # document reports, or the handshake is refused rather than trusted.
+  issuer: "http://127.0.0.1:1600"
+  # Where this process reaches Zitadel, when that differs from the address the
+  # browser uses — "http://zitadel:8080" from inside the compose network. Empty
+  # means they are the same, which is the case for a loopback run.
+  internal_issuer: ""
+  client_id: ""
+  client_secret: ""
+  # The "aud" values an access token must carry. Empty accepts any audience,
+  # which is only safe while this node is the sole relying party. In Zitadel
+  # the value to put here is the project id.
+  audiences: []
+  scopes: ["openid", "profile", "email", "offline_access"]
+  redirect_url: "http://127.0.0.1:1200/api/v1/auth/callback"
+  # Where the browser lands once a login completes, and after a logout.
+  app_url: "http://127.0.0.1:1200/"
+  post_logout_url: ""
+  # never | fallback | always. Zitadel issues opaque access tokens unless the
+  # application asks for JWTs; fallback verifies a JWT locally and introspects
+  # anything else, so both kinds work without a setting to get wrong.
+  introspect: "fallback"
+  roles_claim: "urn:zitadel:iam:org:project:roles"
+  # Roles every caller must hold, whatever route they are asking for. Empty
+  # means authentication alone is the bar.
+  required_roles: []
+  jwks_refresh: "15m"
+  http_timeout: "10s"
+  # How long startup blocks waiting for Zitadel. Past it the node comes up
+  # anyway, reports itself not ready, and answers 503 — not 401 — until the
+  # provider is reachable.
+  startup_discovery_timeout: "10s"
+  session:
+    name: "alexandria_session"
+    domain: ""
+    path: "/"
+    # Plain HTTP on a workstation, so the cookie cannot be marked https-only.
+    # A deployment sets both of these the other way round.
+    secure: false
+    same_site: "lax"
+    ttl: "12h"
+    # 32 bytes of hex or base64 — task auth:key prints one. Empty is tolerated
+    # here and refused in production: the node then seals with a random key and
+    # every restart ends every session.
+    key: ""
+
 observability:
   log_level: "info" # debug | info | warn | error
   log_format: "auto" # auto (text on a terminal, JSON otherwise) | text | json

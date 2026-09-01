@@ -25,7 +25,7 @@ func TestProbesAreMountedAtTheRoot(t *testing.T) {
 	health.Register("wallet", func(context.Context) error { return errors.New("no identity") })
 
 	engine := gin.New()
-	httpapi.NewRouter(health, rest.NewCoreRouter(rest.NewWalletRouter(nil))).Register(engine)
+	httpapi.NewRouter(health, nil, rest.NewCoreRouter(rest.NewWalletRouter(nil))).Register(engine)
 
 	cases := map[string]int{
 		"/healthz": http.StatusOK,
@@ -56,7 +56,7 @@ func TestModuleRoutesStayUnderTheirPrefix(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	engine := gin.New()
-	httpapi.NewRouter(observability.NewHealth(),
+	httpapi.NewRouter(observability.NewHealth(), nil,
 		rest.NewCoreRouter(rest.NewWalletRouter(nil))).Register(engine)
 
 	mounted := make(map[string]bool)

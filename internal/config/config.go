@@ -45,9 +45,13 @@ type Config struct {
 	// defaults set on the loader, which are the ones a container wants.
 	Observability Observability `mapstructure:"observability"`
 	Wallet        Wallet        `mapstructure:"wallet_config"`
-	Client        Client        `mapstructure:"client_config"`
-	Verify        Verify        `mapstructure:"verify_req_config"`
-	Did           Did           `mapstructure:"did_config"`
+	// Auth is the authentication boundary. A file that omits it gets the
+	// defaults, which leave the whole API open — a development posture, and the
+	// reason auth_config.enabled is the first thing a deployment sets.
+	Auth   Auth   `mapstructure:"auth_config"`
+	Client Client `mapstructure:"client_config"`
+	Verify Verify `mapstructure:"verify_req_config"`
+	Did    Did    `mapstructure:"did_config"`
 	// Gaia is nil on a deployment that publishes no Gaia-X participant
 	// description, which the file spells as `gaia_config: null`.
 	Gaia *Gaia `mapstructure:"gaia_config"`
@@ -159,12 +163,24 @@ func newLoader() *viper.Viper {
 // behaviour. Viper folds them into the document it unmarshals.
 func applyDefaults(loader *viper.Viper) {
 	for key, value := range map[string]any{
-		"observability.log_level":            "info",
-		"observability.log_format":           string(LogFormatAuto),
-		"observability.metrics":              true,
-		"observability.pprof":                false,
-		"observability.port":                 "2112",
-		"wallet_config.startup_link_timeout": "10s",
+		"observability.log_level":               "info",
+		"observability.log_format":              string(LogFormatAuto),
+		"observability.metrics":                 true,
+		"observability.pprof":                   false,
+		"observability.port":                    "2112",
+		"wallet_config.startup_link_timeout":    "10s",
+		"auth_config.enabled":                   false,
+		"auth_config.scopes":                    []string{"openid", "profile", "email", "offline_access"},
+		"auth_config.introspect":                string(IntrospectFallback),
+		"auth_config.roles_claim":               "urn:zitadel:iam:org:project:roles",
+		"auth_config.jwks_refresh":              "15m",
+		"auth_config.http_timeout":              "10s",
+		"auth_config.startup_discovery_timeout": "10s",
+		"auth_config.session.name":              "alexandria_session",
+		"auth_config.session.path":              "/",
+		"auth_config.session.same_site":         "lax",
+		"auth_config.session.secure":            false,
+		"auth_config.session.ttl":               "12h",
 	} {
 		loader.SetDefault(key, value)
 	}
@@ -207,6 +223,7 @@ func (c *Config) Validate() error {
 		c.Did.Validate(),
 		c.Observability.Validate(),
 		c.Wallet.Validate(),
+		c.Auth.Validate(c.Common.Connection.IsProd),
 	)
 }
 

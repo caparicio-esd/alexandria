@@ -131,6 +131,8 @@ func (h *contextHandler) WithGroup(name string) slog.Handler {
 const (
 	// ModuleSSIAuth is internal/ssi-auth, the identity bounded context.
 	ModuleSSIAuth = "ssi-auth"
+	// ModuleAuthProxy is internal/auth-proxy, the authentication boundary.
+	ModuleAuthProxy = "auth-proxy"
 	// ModuleConfig is internal/config, the deployment loader.
 	ModuleConfig = "config"
 	// ModuleCommon is internal/common, the shared helpers.

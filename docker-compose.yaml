@@ -31,5 +31,77 @@ services:
       retries: 10
       start_period: 10s
 
+  # ===== Zitadel ============================================================
+  # The identity provider. The node proxies it: nothing outside this compose
+  # file — no browser, no peer — is expected to address it directly, and in a
+  # real deployment it need not be published at all.
+  zitadel-db:
+    image: postgres:17-alpine
+    container_name: alexandria-zitadel-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zitadel
+      POSTGRES_PASSWORD: zitadel
+      POSTGRES_DB: zitadel
+    volumes:
+      - zitadel-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zitadel -d zitadel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  zitadel:
+    # Unpinned on purpose for a local run: a deployment pins the release it was
+    # tested against, by tag or by digest.
+    image: ghcr.io/zitadel/zitadel:latest
+    container_name: alexandria-zitadel
+    restart: unless-stopped
+    # start-from-init bootstraps the database on first run and starts normally
+    # afterwards, so one command covers both. TLS is off because the node
+    # reaches it over the compose network and a browser reaches it over
+    # loopback; a deployment terminates TLS in front of it.
+    command: 'start-from-init --masterkeyFromEnv --tlsMode disabled'
+    environment:
+      # 32 bytes exactly, and development-only: it encrypts every secret
+      # Zitadel stores. A deployment generates its own and mounts it.
+      ZITADEL_MASTERKEY: "MasterkeyNeedsToHave32Characters"
+      ZITADEL_DATABASE_POSTGRES_HOST: zitadel-db
+      ZITADEL_DATABASE_POSTGRES_PORT: 5432
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      # The issuer every token names, and the address the browser is redirected
+      # to. It has to match auth_config.issuer in config/config.yaml exactly —
+      # a mismatch is refused at discovery rather than silently accepted.
+      ZITADEL_EXTERNALDOMAIN: "127.0.0.1"
+      ZITADEL_EXTERNALPORT: 1600
+      ZITADEL_EXTERNALSECURE: false
+      # The first console login. Development values in a committed file, like
+      # the database credentials above.
+      ZITADEL_FIRSTINSTANCE_ORG_NAME: "alexandria"
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: "admin"
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: "Password1!"
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: false
+    ports:
+      # Clear of the node (1200), its database (1500) and the eunomia
+      # containers already on 1300, 1400 and 1450.
+      - "127.0.0.1:1600:8080"
+    depends_on:
+      zitadel-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
 volumes:
   postgres-data:
+  zitadel-data:

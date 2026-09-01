@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
+	authproxy "github.com/caparicio-esd/alexandria/internal/auth-proxy"
 	"github.com/caparicio-esd/alexandria/internal/config"
 	"github.com/caparicio-esd/alexandria/internal/httpapi"
 	"github.com/caparicio-esd/alexandria/internal/observability"
@@ -118,7 +120,30 @@ func newApp(ctx context.Context, cfg *config.Config, stdout io.Writer, environ [
 		return nil, err
 	}
 
+	// The authentication boundary. It is a module like any other — it starts,
+	// reports readiness and closes — and additionally the guard the router puts
+	// in front of every route under the API prefix. Disabled, it is absent
+	// entirely and nothing is protected, which is a development posture.
+	var guard httpapi.Guard
+
 	app.modules = []Module{ssiAuthModule}
+
+	if cfg.Auth.Enabled {
+		authModule, err := authproxy.New(authproxy.Deps{
+			Config: cfg,
+			Logger: logger,
+			Now:    time.Now,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		guard = authModule
+		app.modules = append(app.modules, authModule)
+	} else {
+		app.logger.WarnContext(ctx, "authentication is disabled: every route under "+
+			httpapi.APIPrefix+" is open")
+	}
 
 	for _, module := range app.modules {
 		for name, check := range module.Checks() {
@@ -130,7 +155,7 @@ func newApp(ctx context.Context, cfg *config.Config, stdout io.Writer, environ [
 		return nil, err
 	}
 
-	httpapi.NewRouter(app.health, modulesAsRoutes(app.modules)...).Register(app.engine)
+	httpapi.NewRouter(app.health, guard, modulesAsRoutes(app.modules)...).Register(app.engine)
 
 	app.internal = buildInternalServer(cfg, app.metrics, logger)
 

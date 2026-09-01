@@ -42,16 +42,42 @@ type RootModule interface {
 	RegisterRoot(engine *gin.Engine)
 }
 
+// Guard is what this package needs from an authentication context: the routes
+// that have to answer before a caller has any credential, and the middleware
+// everything else passes through.
+//
+// It is one interface rather than two because the two halves are inseparable:
+// the guard that refuses a request is the same component that owns the route
+// which fixes it, and mounting one without the other produces an API that
+// either cannot be reached or cannot be entered.
+//
+// Declared here, where it is consumed. A context satisfies it by having the two
+// methods, without importing this package.
+type Guard interface {
+	// Public mounts the routes that precede authentication, on a group taken
+	// before the middleware is installed.
+	Public(api *gin.RouterGroup)
+	// Protect is applied to the versioned API group, and so to every route any
+	// module mounts under it.
+	Protect() gin.HandlerFunc
+}
+
 // Router composes the whole HTTP surface.
 type Router struct {
 	health  *observability.Health
+	guard   Guard
 	modules []Module
 }
 
 // NewRouter takes every module it composes as a parameter, so the wiring of
 // concrete implementations happens once, at the composition root.
-func NewRouter(health *observability.Health, modules ...Module) *Router {
-	return &Router{health: health, modules: modules}
+//
+// A nil guard leaves the API open, which is a development posture and the only
+// thing a deployment must not ship. It is a parameter rather than an option so
+// that "who protects this API" is answered at the call site, in the open, and
+// never by omission.
+func NewRouter(health *observability.Health, guard Guard, modules ...Module) *Router {
+	return &Router{health: health, guard: guard, modules: modules}
 }
 
 // Register mounts the process-wide routes and every bounded context.
@@ -64,6 +90,16 @@ func (r *Router) Register(engine *gin.Engine) {
 	engine.GET("/readyz", gin.WrapH(r.health.ReadyHandler()))
 
 	api := engine.Group(APIPrefix)
+
+	// Order is load-bearing. A gin group captures the middleware chain it is
+	// created with, so the public authentication routes are taken off `api`
+	// before Use installs the guard, and every group taken afterwards — which
+	// is every module's — carries it. Mounting the login route after this line
+	// would put it behind the check it exists to satisfy.
+	if r.guard != nil {
+		r.guard.Public(api)
+		api.Use(r.guard.Protect())
+	}
 
 	for _, module := range r.modules {
 		module.Register(api)
