@@ -61,7 +61,7 @@ func (d didResp) ToDomain() (wallet.Did, error) {
 	}
 
 	return wallet.Did{
-		ID:         d.Did,
+		ID:         d.ID,
 		Method:     method,
 		Alias:      d.Alias,
 		Default:    d.Default,

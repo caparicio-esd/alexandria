@@ -27,4 +27,5 @@ coverage.html
 
 # Internal notes: working documents, not part of the published repository
 /docs/internal/
+/docs/artifacts/
 CURRENT_NOTES.md

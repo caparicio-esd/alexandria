@@ -130,8 +130,8 @@ func (s *Service) RegisterKey(ctx context.Context, pem string, alias *string, id
 }
 
 // DeleteKey purges a key, provided no DID still references it.
-func (s *Service) DeleteKey(c context.Context, keyId string) error {
-	err := s.wallet.DeleteKey(c, keyId)
+func (s *Service) DeleteKey(c context.Context, keyID string) error {
+	err := s.wallet.DeleteKey(c, keyID)
 	if err != nil {
 		return fmt.Errorf("wallet reported error by deleting keys: %w", err)
 	}
@@ -162,9 +162,6 @@ func (s *Service) RegisterDid(
 		return fmt.Errorf("wallet reported error by did registering: %w", err)
 	}
 
-	// A DID with no key bound into it resolves to a document that cannot verify
-	// anything. The wallet would accept it and the failure would surface later,
-	// at signing time, far from the request that caused it.
 	if len(keys) == 0 {
 		return common.Invalid("keys", "is required: a did needs at least one key bound into it")
 	}
@@ -199,7 +196,7 @@ func (s *Service) Did(_ context.Context) (string, error) {
 	if !ok {
 		return "", common.ErrNotLinked
 	}
-	return id.ID, nil
+	return id.Document.ID, nil
 }
 
 // DidDoc resolves the DID Document of the default DID, as served publicly.
@@ -212,9 +209,27 @@ func (s *Service) DidDoc(_ context.Context) (did.Doc, error) {
 	return identity.Document, nil
 }
 
+// GetAllDids gets all dids from wallet
+func (s *Service) GetAllDids(c context.Context) ([]Did, error) {
+	dids, err := s.wallet.GetAllDids(c)
+	if err != nil {
+		return []Did{}, fmt.Errorf("wallet reported error by getting dids: %w", err)
+	}
+	return dids, nil
+}
+
+// GetDidByID gets did by ID from wallet
+func (s *Service) GetDidByID(c context.Context, didID string) (Did, error) {
+	did, err := s.wallet.GetDidByID(c, didID)
+	if err != nil {
+		return Did{}, fmt.Errorf("wallet reported error by getting did: %w", err)
+	}
+	return did, nil
+}
+
 // DeleteDid drops a DID and its verification method bindings.
-func (s *Service) DeleteDid(c context.Context, didId string) error {
-	err := s.wallet.DeleteDid(c, didId)
+func (s *Service) DeleteDid(c context.Context, didID string) error {
+	err := s.wallet.DeleteDid(c, didID)
 	if err != nil {
 		return fmt.Errorf("wallet reported error by deleting dids: %w", err)
 	}
@@ -222,25 +237,41 @@ func (s *Service) DeleteDid(c context.Context, didId string) error {
 }
 
 // SetDefaultDid promotes a DID to be the wallet primary identity.
-func (s *Service) SetDefaultDid(_ context.Context, _ string) (string, error) {
-	panic("wallet: SetDefaultDid not implemented")
+func (s *Service) SetDefaultDid(c context.Context, didID string) error {
+	err := s.wallet.SetDefaultDid(c, didID)
+	if err != nil {
+		return fmt.Errorf("wallet reported error by setting did as default: %w", err)
+	}
+	return nil
 }
 
 // ===== DID verification methods ==============================================
 
 // AddKeyToDid binds a key into the verification methods of a DID.
-func (s *Service) AddKeyToDid(_ context.Context, _, _ string) (string, error) {
-	panic("wallet: AddKeyToDid not implemented")
+func (s *Service) AddKeyToDid(c context.Context, didID, keyID string) error {
+	err := s.wallet.AddKeyToDid(c, didID, keyID)
+	if err != nil {
+		return fmt.Errorf("wallet reported error by adding key from did: %w", err)
+	}
+	return nil
 }
 
 // RemoveKeyFromDid unbinds a key from the verification methods of a DID.
-func (s *Service) RemoveKeyFromDid(_ context.Context, _, _ string) (string, error) {
-	panic("wallet: RemoveKeyFromDid not implemented")
+func (s *Service) RemoveKeyFromDid(c context.Context, didID, keyID string) error {
+	err := s.wallet.RemoveKeyFromDid(c, didID, keyID)
+	if err != nil {
+		return fmt.Errorf("wallet reported error by removing key from did: %w", err)
+	}
+	return nil
 }
 
 // SetDefaultKey promotes a key to be the default verification method of a DID.
-func (s *Service) SetDefaultKey(_ context.Context, _, _ string) (string, error) {
-	panic("wallet: SetDefaultKey not implemented")
+func (s *Service) SetDefaultKey(c context.Context, didID, keyID string) error {
+	err := s.wallet.SetDefaultKey(c, didID, keyID)
+	if err != nil {
+		return fmt.Errorf("wallet reported error by setting key as default: %w", err)
+	}
+	return nil
 }
 
 // ===== Credentials ===========================================================

@@ -177,8 +177,9 @@ func (a *Adapter) GetAllKeys(ctx context.Context) ([]wallet.Key, error) {
 	return keys, nil
 }
 
-func (a *Adapter) DeleteKey(ctx context.Context, keyId string) error {
-	path := fmt.Sprintf("/keys/%s", keyId)
+// DeleteKey purges a key reference from the wallet vault.
+func (a *Adapter) DeleteKey(ctx context.Context, keyID string) error {
+	path := fmt.Sprintf("/keys/%s", keyID)
 
 	// call
 	started := time.Now()
@@ -250,8 +251,9 @@ func (a *Adapter) RegisterDid(
 	return nil
 }
 
-func (a *Adapter) DeleteDid(ctx context.Context, keyId string) error {
-	path := fmt.Sprintf("/dids/%s", keyId)
+// DeleteDid drops a DID record and its verification method bindings.
+func (a *Adapter) DeleteDid(ctx context.Context, didID string) error {
+	path := fmt.Sprintf("/dids/%s", didID)
 
 	// call
 	started := time.Now()
@@ -269,6 +271,203 @@ func (a *Adapter) DeleteDid(ctx context.Context, keyId string) error {
 
 	a.logger.DebugContext(ctx, "wallet call",
 		"method", http.MethodDelete, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	return nil
+}
+
+// SetDefaultDid promotes a DID to be the wallet active identity.
+func (a *Adapter) SetDefaultDid(ctx context.Context, didID string) error {
+	path := fmt.Sprintf("/dids/default/%s", didID)
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		Post(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodPost, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodPost, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	// send back to domain
+	return nil
+}
+
+// GetAllDids lists every DID the wallet holds.
+func (a *Adapter) GetAllDids(ctx context.Context) ([]wallet.Did, error) {
+	const path = "/dids/all"
+
+	var out []didResp
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		SetResult(&out).
+		Get(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodGet, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return []wallet.Did{}, fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodGet, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return []wallet.Did{}, statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	// send back to domain
+	dids := make([]wallet.Did, 0, len(out))
+	for _, d := range out {
+		did, err := d.ToDomain()
+		if err != nil {
+			return nil, err
+		}
+
+		dids = append(dids, did)
+	}
+
+	return dids, nil
+}
+
+// GetDidByID resolves a single DID record by its Fafnir identifier.
+func (a *Adapter) GetDidByID(ctx context.Context, didID string) (wallet.Did, error) {
+	path := fmt.Sprintf("/dids/%s", didID)
+	var out didResp
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		SetResult(&out).
+		Get(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodGet, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return wallet.Did{}, fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodGet, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return wallet.Did{}, statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	return out.ToDomain()
+}
+
+// AddKeyToDid binds a key into the verification methods of a DID.
+func (a *Adapter) AddKeyToDid(ctx context.Context, didID string, keyID string) error {
+	path := fmt.Sprintf("/dids/%s/key/%s", didID, keyID)
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		Post(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodPost, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodPost, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	return nil
+}
+
+// RemoveKeyFromDid unbinds a key from the verification methods of a DID.
+func (a *Adapter) RemoveKeyFromDid(ctx context.Context, didID string, keyID string) error {
+	path := fmt.Sprintf("/dids/%s/key/%s", didID, keyID)
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		Delete(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodDelete, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodDelete, "path", path,
+		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
+
+	// validate
+	if res.IsStatusFailure() {
+		return statusError(res.StatusCode(), path, res.Bytes())
+	}
+
+	return nil
+}
+
+// SetDefaultKey promotes a key to be the default verification method of a DID.
+func (a *Adapter) SetDefaultKey(ctx context.Context, didID string, keyID string) error {
+	path := fmt.Sprintf("/dids/%s/key/default/%s", didID, keyID)
+
+	// call
+	started := time.Now()
+	res, err := a.http.R().
+		SetContext(ctx).
+		Post(path)
+	if err != nil {
+		a.logger.DebugContext(ctx, "wallet call failed",
+			"method", http.MethodPost, "path", path,
+			"duration_ms", time.Since(started).Milliseconds(), "err", err)
+
+		return fmt.Errorf("fafnir: calling %s: %w", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	a.logger.DebugContext(ctx, "wallet call",
+		"method", http.MethodPost, "path", path,
 		"status", res.StatusCode(), "duration_ms", time.Since(started).Milliseconds())
 
 	// validate

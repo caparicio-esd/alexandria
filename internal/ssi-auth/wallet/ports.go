@@ -23,11 +23,23 @@ type Wallet interface {
 	// Get all keys
 	GetAllKeys(ctx context.Context) ([]Key, error)
 	// Delete key
-	DeleteKey(ctx context.Context, keyId string) error
+	DeleteKey(ctx context.Context, keyID string) error
 	// Registers did
 	RegisterDid(ctx context.Context, didPlan *DidPlan) error
+	// GetAllDids
+	GetAllDids(ctx context.Context) ([]Did, error)
+	// GetAllDids
+	GetDidByID(ctx context.Context, didID string) (Did, error)
 	// Delete did
-	DeleteDid(ctx context.Context, keyId string) error
+	DeleteDid(ctx context.Context, didID string) error
+	// SetDefaultDid
+	SetDefaultDid(ctx context.Context, didID string) error
+	// AddKeyToDid
+	AddKeyToDid(ctx context.Context, didID string, keyID string) error
+	// RemoveKeyFromDid
+	RemoveKeyFromDid(ctx context.Context, didID string, keyID string) error
+	// SetDefaultKey
+	SetDefaultKey(ctx context.Context, didID string, keyID string) error
 }
 
 // ===== Pem Descriptor ===========================================

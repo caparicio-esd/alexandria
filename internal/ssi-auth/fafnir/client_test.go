@@ -436,3 +436,355 @@ func TestDeleteStatusErrors(t *testing.T) {
 		}
 	}
 }
+
+// ===== DID listing and resolution ============================================
+
+// didRecord is a Fafnir DID record, trimmed to the columns the adapter reads.
+// The document carries the v1.1 context and a service entry without an id, the
+// two deviations the adapter normalizes on the way in.
+const didRecord = `{
+	"id": "475e5c94-5bb5-4ce1-8820-9e39dc992213",
+	"did": "did:web:alexandria.upm.es",
+	"alias": "base",
+	"default": true,
+	"type": "Web",
+	"keys": [{"internal": "private_key.json", "fragment": "0"}],
+	"default_key": {"internal": "private_key.json", "fragment": "0"},
+	"did_document": {
+		"@context": ["https://www.w3.org/ns/did/v1.1"],
+		"id": "did:web:alexandria.upm.es",
+		"service": [
+			{
+				"type": "AuthorizationServer",
+				"serviceEndpoint": "http://127.0.0.1:1200/api/v1/gate/access"
+			}
+		]
+	}
+}`
+
+// TestGetAllDidsCall pins both halves of the listing: Fafnir lists the DIDs
+// under /dids/all, and the body it answers with has to reach the domain. The
+// call once fired correctly and decoded into nothing, so an inventory of any
+// size came back as an empty array.
+func TestGetAllDidsCall(t *testing.T) {
+	t.Parallel()
+
+	var (
+		gotMethod string
+		gotPath   string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, "["+didRecord+"]")
+	}))
+	defer srv.Close()
+
+	adapter, err := fafnir.New(srv.URL, nil)
+	if err != nil {
+		t.Fatalf("building adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	dids, err := adapter.GetAllDids(t.Context())
+	if err != nil {
+		t.Fatalf("GetAllDids: %v", err)
+	}
+
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %q, want %q", gotMethod, http.MethodGet)
+	}
+
+	if gotPath != "/dids/all" {
+		t.Errorf("path = %q, want %q", gotPath, "/dids/all")
+	}
+
+	if len(dids) != 1 {
+		t.Fatalf("got %d dids, want 1", len(dids))
+	}
+
+	got := dids[0]
+	if got.ID != "475e5c94-5bb5-4ce1-8820-9e39dc992213" {
+		t.Errorf("id = %q, want the record's own", got.ID)
+	}
+
+	if got.Alias != "base" || !got.Default {
+		t.Errorf("alias = %q, default = %v, want %q and true", got.Alias, got.Default, "base")
+	}
+
+	if got.Method != common.MethodWeb {
+		t.Errorf("method = %q, want %q", got.Method, common.MethodWeb)
+	}
+
+	if got.Document.ID != "did:web:alexandria.upm.es" {
+		t.Errorf("document id = %q, want the did itself", got.Document.ID)
+	}
+
+	if len(got.Keys) != 1 || got.Keys[0].KeyID != "private_key.json" {
+		t.Errorf("keys = %+v, want the record's single binding", got.Keys)
+	}
+}
+
+// TestGetAllDidsOnAnEmptyWallet keeps "no dids" a success with an empty slice
+// rather than a nil the caller has to guard.
+func TestGetAllDidsOnAnEmptyWallet(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[]`)
+	}))
+	defer srv.Close()
+
+	adapter, err := fafnir.New(srv.URL, nil)
+	if err != nil {
+		t.Fatalf("building adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	dids, err := adapter.GetAllDids(t.Context())
+	if err != nil {
+		t.Fatalf("GetAllDids: %v", err)
+	}
+
+	if dids == nil {
+		t.Fatal("dids = nil, want an empty slice")
+	}
+
+	if len(dids) != 0 {
+		t.Errorf("got %d dids, want none", len(dids))
+	}
+}
+
+// TestGetDidByIDCall pins the resolution of a single record: the id travels in
+// the path, and the record answered has to reach the domain populated.
+func TestGetDidByIDCall(t *testing.T) {
+	t.Parallel()
+
+	const didID = "475e5c94-5bb5-4ce1-8820-9e39dc992213"
+
+	var (
+		gotMethod string
+		gotPath   string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, didRecord)
+	}))
+	defer srv.Close()
+
+	adapter, err := fafnir.New(srv.URL, nil)
+	if err != nil {
+		t.Fatalf("building adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	got, err := adapter.GetDidByID(t.Context(), didID)
+	if err != nil {
+		t.Fatalf("GetDidByID: %v", err)
+	}
+
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %q, want %q", gotMethod, http.MethodGet)
+	}
+
+	if gotPath != "/dids/"+didID {
+		t.Errorf("path = %q, want %q", gotPath, "/dids/"+didID)
+	}
+
+	if got.ID != didID {
+		t.Errorf("id = %q, want %q", got.ID, didID)
+	}
+
+	if got.Document.ID != "did:web:alexandria.upm.es" {
+		t.Errorf("document id = %q, want the did itself", got.Document.ID)
+	}
+}
+
+// TestGetDidStatusErrors pins the sentinels for both reads, so a did that is not
+// there renders a 404 rather than a 500.
+func TestGetDidStatusErrors(t *testing.T) {
+	t.Parallel()
+
+	calls := map[string]func(*fafnir.Adapter) error{
+		"all": func(a *fafnir.Adapter) error {
+			_, err := a.GetAllDids(t.Context())
+
+			return err
+		},
+		"by id": func(a *fafnir.Adapter) error {
+			_, err := a.GetDidByID(t.Context(), "missing")
+
+			return err
+		},
+	}
+
+	statuses := map[string]struct {
+		status int
+		want   error
+	}{
+		"absent":       {http.StatusNotFound, common.ErrNotFound},
+		"malformed id": {http.StatusBadRequest, common.ErrInvalidInput},
+		"wallet down":  {http.StatusInternalServerError, nil},
+	}
+
+	for target, call := range calls {
+		for name, tc := range statuses {
+			t.Run(target+"/"+name, func(t *testing.T) {
+				t.Parallel()
+
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, `{"message":"Not Found","error_code":3110}`)
+				}))
+				defer srv.Close()
+
+				adapter, err := fafnir.New(srv.URL, nil)
+				if err != nil {
+					t.Fatalf("building adapter: %v", err)
+				}
+				defer func() { _ = adapter.Close() }()
+
+				err = call(adapter)
+				if err == nil {
+					t.Fatalf("status %d: expected an error", tc.status)
+				}
+
+				if tc.want != nil && !errors.Is(err, tc.want) {
+					t.Errorf("error = %v, want it to match %v", err, tc.want)
+				}
+			})
+		}
+	}
+}
+
+// ===== DID and key promotion =================================================
+
+// didMutations are the calls that change a DID rather than read it. They differ
+// only in verb and path, which is exactly what a wrong one gets away with: the
+// wallet answers 404 for a record that is plainly there.
+var didMutations = map[string]struct {
+	call   func(*testing.T, *fafnir.Adapter) error
+	method string
+	path   string
+}{
+	"set default did": {
+		call: func(t *testing.T, a *fafnir.Adapter) error {
+			return a.SetDefaultDid(t.Context(), "did:web:alexandria.upm.es")
+		},
+		method: http.MethodPost,
+		path:   "/dids/default/did:web:alexandria.upm.es",
+	},
+	"add key to did": {
+		call: func(t *testing.T, a *fafnir.Adapter) error {
+			return a.AddKeyToDid(t.Context(), "did:web:alexandria.upm.es", "key.json")
+		},
+		method: http.MethodPost,
+		path:   "/dids/did:web:alexandria.upm.es/key/key.json",
+	},
+	"remove key from did": {
+		call: func(t *testing.T, a *fafnir.Adapter) error {
+			return a.RemoveKeyFromDid(t.Context(), "did:web:alexandria.upm.es", "key.json")
+		},
+		method: http.MethodDelete,
+		path:   "/dids/did:web:alexandria.upm.es/key/key.json",
+	},
+	"set default key": {
+		call: func(t *testing.T, a *fafnir.Adapter) error {
+			return a.SetDefaultKey(t.Context(), "did:web:alexandria.upm.es", "key.json")
+		},
+		method: http.MethodPost,
+		path:   "/dids/did:web:alexandria.upm.es/key/default/key.json",
+	},
+}
+
+// TestDidMutationCalls pins the verb and the path of every mutation.
+func TestDidMutationCalls(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range didMutations {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				gotMethod string
+				gotPath   string
+			)
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.Path
+
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer srv.Close()
+
+			adapter, err := fafnir.New(srv.URL, nil)
+			if err != nil {
+				t.Fatalf("building adapter: %v", err)
+			}
+			defer func() { _ = adapter.Close() }()
+
+			if err := tc.call(t, adapter); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+
+			if gotMethod != tc.method {
+				t.Errorf("method = %q, want %q", gotMethod, tc.method)
+			}
+
+			if gotPath != tc.path {
+				t.Errorf("path = %q, want %q", gotPath, tc.path)
+			}
+		})
+	}
+}
+
+// TestDidMutationStatusErrors pins the sentinels for every mutation, so binding
+// a key onto a did that does not exist is reported as such rather than as a
+// successful no-op.
+func TestDidMutationStatusErrors(t *testing.T) {
+	t.Parallel()
+
+	statuses := map[string]struct {
+		status int
+		want   error
+	}{
+		"absent":        {http.StatusNotFound, common.ErrNotFound},
+		"already bound": {http.StatusConflict, common.ErrConflict},
+		"malformed id":  {http.StatusBadRequest, common.ErrInvalidInput},
+	}
+
+	for name, tc := range didMutations {
+		for status, sc := range statuses {
+			t.Run(name+"/"+status, func(t *testing.T) {
+				t.Parallel()
+
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(sc.status)
+					_, _ = io.WriteString(w, `{"message":"Not Found","error_code":3110}`)
+				}))
+				defer srv.Close()
+
+				adapter, err := fafnir.New(srv.URL, nil)
+				if err != nil {
+					t.Fatalf("building adapter: %v", err)
+				}
+				defer func() { _ = adapter.Close() }()
+
+				err = tc.call(t, adapter)
+				if err == nil {
+					t.Fatalf("status %d: expected an error", sc.status)
+				}
+
+				if !errors.Is(err, sc.want) {
+					t.Errorf("error = %v, want it to match %v", err, sc.want)
+				}
+			})
+		}
+	}
+}

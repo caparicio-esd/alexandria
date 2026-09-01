@@ -15,12 +15,17 @@ const testPem = "-----BEGIN PRIVATE KEY-----\nMC4=\n-----END PRIVATE KEY-----\n"
 // stubWallet stands in for the outsourced wallet. It records the plan it was
 // handed, which is the whole point: RegisterKey's job is minting that plan.
 type stubWallet struct {
-	gotPlan      *wallet.KeyPlan
-	gotDidPlan   *wallet.DidPlan
-	gotDeleteKey *string
-	gotDeleteDid *string
-	keys         []wallet.Key
-	err          error
+	gotPlan       *wallet.KeyPlan
+	gotDidPlan    *wallet.DidPlan
+	gotDeleteKey  *string
+	gotDeleteDid  *string
+	gotDefaultDid *string
+	gotDidByID    *string
+	gotBinding    *binding
+	keys          []wallet.Key
+	dids          []wallet.Did
+	did           wallet.Did
+	err           error
 }
 
 func (s *stubWallet) Link(context.Context) (wallet.Did, error) {
@@ -57,6 +62,57 @@ func (s *stubWallet) RegisterDid(_ context.Context, plan *wallet.DidPlan) error 
 	s.gotDidPlan = plan
 
 	return s.err
+}
+
+func (s *stubWallet) GetAllDids(context.Context) ([]wallet.Did, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return s.dids, nil
+}
+
+func (s *stubWallet) GetDidByID(_ context.Context, didID string) (wallet.Did, error) {
+	s.gotDidByID = &didID
+
+	if s.err != nil {
+		return wallet.Did{}, s.err
+	}
+
+	return s.did, nil
+}
+
+func (s *stubWallet) SetDefaultDid(_ context.Context, didID string) error {
+	s.gotDefaultDid = &didID
+
+	return s.err
+}
+
+func (s *stubWallet) AddKeyToDid(_ context.Context, didID, keyID string) error {
+	s.gotBinding = &binding{op: "add", did: didID, key: keyID}
+
+	return s.err
+}
+
+func (s *stubWallet) RemoveKeyFromDid(_ context.Context, didID, keyID string) error {
+	s.gotBinding = &binding{op: "remove", did: didID, key: keyID}
+
+	return s.err
+}
+
+func (s *stubWallet) SetDefaultKey(_ context.Context, didID, keyID string) error {
+	s.gotBinding = &binding{op: "default", did: didID, key: keyID}
+
+	return s.err
+}
+
+// binding records which verification-method mutation the port saw, and with
+// which pair of identifiers: the two are interchangeable in type and not in
+// meaning, so a swapped argument is exactly the mistake worth pinning.
+type binding struct {
+	op  string
+	did string
+	key string
 }
 
 // stubKeys stands in for the PEM inspector. The use case is not being tested on
@@ -419,5 +475,214 @@ func TestDeleteDidWrapsWalletErrors(t *testing.T) {
 	err := svc.DeleteDid(t.Context(), "did:web:alexandria.upm.es")
 	if !errors.Is(err, common.ErrConflict) {
 		t.Errorf("error = %v, want it to match %v", err, common.ErrConflict)
+	}
+}
+
+// ===== DID listing ===========================================================
+
+// TestGetAllDidsPassesTheWalletInventoryThrough pins that listing DIDs is a
+// pass-through, in the order the wallet stated them.
+func TestGetAllDidsPassesTheWalletInventoryThrough(t *testing.T) {
+	t.Parallel()
+
+	held := []wallet.Did{
+		{ID: "475e5c94", Alias: "base", Default: true},
+		{ID: "9b2f0a13", Alias: "spare"},
+	}
+
+	stub := &stubWallet{dids: held}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	dids, err := svc.GetAllDids(t.Context())
+	if err != nil {
+		t.Fatalf("GetAllDids: %v", err)
+	}
+
+	if len(dids) != len(held) {
+		t.Fatalf("got %d dids, want %d", len(dids), len(held))
+	}
+
+	for i, want := range held {
+		if dids[i].ID != want.ID || dids[i].Alias != want.Alias || dids[i].Default != want.Default {
+			t.Errorf("dids[%d] = %+v, want %+v", i, dids[i], want)
+		}
+	}
+}
+
+// TestGetAllDidsOnAnEmptyWallet keeps "no dids" from reading as a failure: a
+// wallet that holds none is a legitimate state.
+func TestGetAllDidsOnAnEmptyWallet(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubWallet{}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	dids, err := svc.GetAllDids(t.Context())
+	if err != nil {
+		t.Fatalf("GetAllDids: %v", err)
+	}
+
+	if len(dids) != 0 {
+		t.Errorf("got %d dids, want none", len(dids))
+	}
+}
+
+// TestGetAllDidsWrapsWalletErrors keeps the sentinel reachable, so an
+// unreachable wallet is not reported as one holding no dids.
+func TestGetAllDidsWrapsWalletErrors(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubWallet{err: common.ErrNotFound}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	dids, err := svc.GetAllDids(t.Context())
+	if !errors.Is(err, common.ErrNotFound) {
+		t.Errorf("error = %v, want it to match %v", err, common.ErrNotFound)
+	}
+
+	if len(dids) != 0 {
+		t.Errorf("got %d dids alongside an error, want none", len(dids))
+	}
+}
+
+// ===== DID resolution ========================================================
+
+// TestGetDidByIDForwardsTheIdentifier pins the identifier the use case hands
+// on: a rewritten one resolves either nothing or the wrong record.
+func TestGetDidByIDForwardsTheIdentifier(t *testing.T) {
+	t.Parallel()
+
+	const didID = "475e5c94-5bb5-4ce1-8820-9e39dc992213"
+
+	stub := &stubWallet{did: wallet.Did{ID: didID, Alias: "base"}}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	got, err := svc.GetDidByID(t.Context(), didID)
+	if err != nil {
+		t.Fatalf("GetDidByID: %v", err)
+	}
+
+	if stub.gotDidByID == nil {
+		t.Fatal("the wallet was never called")
+	}
+
+	if *stub.gotDidByID != didID {
+		t.Errorf("resolved %q, want %q", *stub.gotDidByID, didID)
+	}
+
+	if got.ID != didID || got.Alias != "base" {
+		t.Errorf("did = %+v, want the record the wallet held", got)
+	}
+}
+
+// TestGetDidByIDWrapsWalletErrors keeps the sentinel reachable, so a did that is
+// not there still renders a 404 rather than a 500.
+func TestGetDidByIDWrapsWalletErrors(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubWallet{err: common.ErrNotFound}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	if _, err := svc.GetDidByID(t.Context(), "missing"); !errors.Is(err, common.ErrNotFound) {
+		t.Errorf("error = %v, want it to match %v", err, common.ErrNotFound)
+	}
+}
+
+// ===== DID and key promotion =================================================
+
+// TestSetDefaultDidForwardsTheIdentifier pins the identifier promoted, since
+// promoting the wrong one silently changes what the wallet signs with.
+func TestSetDefaultDidForwardsTheIdentifier(t *testing.T) {
+	t.Parallel()
+
+	const didID = "did:web:alexandria.upm.es"
+
+	stub := &stubWallet{}
+	svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+	if err := svc.SetDefaultDid(t.Context(), didID); err != nil {
+		t.Fatalf("SetDefaultDid: %v", err)
+	}
+
+	if stub.gotDefaultDid == nil {
+		t.Fatal("the wallet was never called")
+	}
+
+	if *stub.gotDefaultDid != didID {
+		t.Errorf("promoted %q, want %q", *stub.gotDefaultDid, didID)
+	}
+}
+
+// TestKeyBindingsForwardBothIdentifiers pins that the DID and the key reach the
+// port in that order, on each of the three mutations that take both.
+func TestKeyBindingsForwardBothIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	const (
+		didID = "did:web:alexandria.upm.es"
+		keyID = "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs.json"
+	)
+
+	calls := map[string]func(*wallet.Service) error{
+		"add":     func(s *wallet.Service) error { return s.AddKeyToDid(t.Context(), didID, keyID) },
+		"remove":  func(s *wallet.Service) error { return s.RemoveKeyFromDid(t.Context(), didID, keyID) },
+		"default": func(s *wallet.Service) error { return s.SetDefaultKey(t.Context(), didID, keyID) },
+	}
+
+	for op, call := range calls {
+		t.Run(op, func(t *testing.T) {
+			t.Parallel()
+
+			stub := &stubWallet{}
+			svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+			if err := call(svc); err != nil {
+				t.Fatalf("%s: %v", op, err)
+			}
+
+			if stub.gotBinding == nil {
+				t.Fatal("the wallet was never called")
+			}
+
+			want := binding{op: op, did: didID, key: keyID}
+			if *stub.gotBinding != want {
+				t.Errorf("binding = %+v, want %+v", *stub.gotBinding, want)
+			}
+		})
+	}
+}
+
+// TestDidMutationsWrapWalletErrors is the regression these mutations earned:
+// each of them built its error and dropped it, so a wallet that answered 404
+// was reported to the caller as a success.
+func TestDidMutationsWrapWalletErrors(t *testing.T) {
+	t.Parallel()
+
+	calls := map[string]func(*wallet.Service) error{
+		"set default did": func(s *wallet.Service) error {
+			return s.SetDefaultDid(t.Context(), "did:web:missing")
+		},
+		"add key to did": func(s *wallet.Service) error {
+			return s.AddKeyToDid(t.Context(), "did:web:missing", "missing.json")
+		},
+		"remove key from did": func(s *wallet.Service) error {
+			return s.RemoveKeyFromDid(t.Context(), "did:web:missing", "missing.json")
+		},
+		"set default key": func(s *wallet.Service) error {
+			return s.SetDefaultKey(t.Context(), "did:web:missing", "missing.json")
+		},
+	}
+
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			stub := &stubWallet{err: common.ErrNotFound}
+			svc := wallet.NewService(stub, usableKey("unused"), nil, nil)
+
+			if err := call(svc); !errors.Is(err, common.ErrNotFound) {
+				t.Errorf("error = %v, want it to match %v", err, common.ErrNotFound)
+			}
+		})
 	}
 }

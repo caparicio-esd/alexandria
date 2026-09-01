@@ -27,7 +27,9 @@ func NewWalletRouter(holder *wallet.Service) *WalletRouter {
 //	GET    /wallet/keys                   lists the registered keys
 //	DELETE /wallet/key/:id                purges a key reference
 //	GET    /wallet/did                    resolves the primary identity string
+//	GET    /wallet/did/all                lists every DID held
 //	POST   /wallet/did                    spawns a local DID
+//	GET    /wallet/did/:id                resolves a single DID record
 //	DELETE /wallet/did/:id                drops a DID mapping
 //	POST   /wallet/did/:id/default        promotes a DID to default
 //	POST   /wallet/did/:id/key/:key_id    binds a key into a DID
@@ -49,8 +51,10 @@ func (r *WalletRouter) Register(parent *gin.RouterGroup) *gin.RouterGroup {
 	walletRouter.DELETE("/keys/:id", r.deleteKey) // ok
 
 	didRouter := walletRouter.Group("/did")
-	didRouter.GET("", r.getWalletDid)     // ok
-	didRouter.POST("", r.registerDid)     // ok
+	didRouter.GET("", r.getWalletDid) // ok
+	didRouter.GET("/all", r.getAllDids)
+	didRouter.POST("", r.registerDid) // ok
+	didRouter.GET("/:id", r.getDid)
 	didRouter.DELETE("/:id", r.deleteDid) // ok
 	didRouter.POST("/:id/default", r.setDefaultDid)
 	didRouter.POST("/:id/key/:key_id", r.addKeyToDid)
@@ -119,8 +123,8 @@ func (r *WalletRouter) registerKey(c *gin.Context) {
 }
 
 func (r *WalletRouter) deleteKey(c *gin.Context) {
-	keyId := c.Params.ByName("id")
-	err := r.holder.DeleteKey(c, keyId)
+	keyID := c.Params.ByName("id")
+	err := r.holder.DeleteKey(c, keyID)
 	if err != nil {
 		respondError(c, err)
 		return
@@ -183,6 +187,18 @@ func (r *WalletRouter) getWalletDid(c *gin.Context) {
 	c.JSON(http.StatusOK, didIDResp{Did: id})
 }
 
+// getAllDids renders every DID the wallet holds.
+func (r *WalletRouter) getAllDids(c *gin.Context) {
+	dids, err := r.holder.GetAllDids(c.Request.Context())
+	if err != nil {
+		respondError(c, err)
+
+		return
+	}
+
+	c.JSON(http.StatusOK, &dids)
+}
+
 func (r *WalletRouter) getDidDoc(c *gin.Context) {
 	doc, err := r.holder.DidDoc(c.Request.Context())
 	if err != nil {
@@ -190,15 +206,25 @@ func (r *WalletRouter) getDidDoc(c *gin.Context) {
 
 		return
 	}
-
-	// The pointer matters: did.Doc declares MarshalJSON on the pointer
-	// receiver, so passing the value would emit the Go field names.
 	c.JSON(http.StatusOK, &doc)
 }
 
+// getDid renders a single DID record, or 404 when there is none.
+func (r *WalletRouter) getDid(c *gin.Context) {
+	didID := c.Params.ByName("id")
+	did, err := r.holder.GetDidByID(c.Request.Context(), didID)
+	if err != nil {
+		respondError(c, err)
+
+		return
+	}
+
+	c.JSON(http.StatusOK, &did)
+}
+
 func (r *WalletRouter) deleteDid(c *gin.Context) {
-	keyId := c.Params.ByName("id")
-	err := r.holder.DeleteDid(c, keyId)
+	didID := c.Params.ByName("id")
+	err := r.holder.DeleteDid(c, didID)
 	if err != nil {
 		respondError(c, err)
 		return
@@ -206,13 +232,52 @@ func (r *WalletRouter) deleteDid(c *gin.Context) {
 	c.Status(http.StatusAccepted)
 }
 
-func (r *WalletRouter) setDefaultDid(_ *gin.Context) {}
+// setDefaultDid promotes a DID to be the wallet active identity.
+func (r *WalletRouter) setDefaultDid(c *gin.Context) {
+	didID := c.Params.ByName("id")
+	err := r.holder.SetDefaultDid(c, didID)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
 
-func (r *WalletRouter) addKeyToDid(_ *gin.Context) {}
+// addKeyToDid binds a key into the verification methods of a DID.
+func (r *WalletRouter) addKeyToDid(c *gin.Context) {
+	didID := c.Params.ByName("id")
+	keyID := c.Params.ByName("key_id")
+	err := r.holder.AddKeyToDid(c, didID, keyID)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusCreated)
+}
 
-func (r *WalletRouter) removeKeyFromDid(_ *gin.Context) {}
+// removeKeyFromDid unbinds a key from the verification methods of a DID.
+func (r *WalletRouter) removeKeyFromDid(c *gin.Context) {
+	didID := c.Params.ByName("id")
+	keyID := c.Params.ByName("key_id")
+	err := r.holder.RemoveKeyFromDid(c, didID, keyID)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
 
-func (r *WalletRouter) setDefaultKey(_ *gin.Context) {}
+// setDefaultKey promotes a key to be the default verification method of a DID.
+func (r *WalletRouter) setDefaultKey(c *gin.Context) {
+	didID := c.Params.ByName("id")
+	keyID := c.Params.ByName("key_id")
+	err := r.holder.SetDefaultKey(c, didID, keyID)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
 
 func (r *WalletRouter) deleteCredential(_ *gin.Context) {}
 
