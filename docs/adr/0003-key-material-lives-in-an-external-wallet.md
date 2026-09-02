@@ -27,8 +27,10 @@ bounds how long startup waits; past it the node comes up anyway, reports itself
 not ready through `/readyz`, and keeps retrying in the background with a capped
 backoff.
 
-The wallet is not deployed by this repository. Every deployment file points at
-one and none brings one up.
+The wallet is a dependency this repository deploys but does not own. The image
+is published elsewhere; what lives here is only how it runs — a configuration
+file per deployment shape, and a database of its own. Every deployment can
+point at a wallet that already exists instead, and the production values do.
 
 ## Consequences
 
@@ -42,8 +44,14 @@ does.
 second wallet implementation is a second adapter. Nothing above `internal/ssi-auth`
 knows which one is in use.
 
-Local development needs a wallet running somewhere, which is real friction and
-the reason the node is built to come up without one.
+Local development needs a wallet running somewhere, which is why
+`docker-compose.dev.yaml` brings one up. It is still the reason the node is
+built to come up without one.
+
+The wallet's own secret — the database credential it reads while
+`is_vault_real` is false — is a file on disk, rendered from the environment
+under compose and from a Secret under Kubernetes. That is not a Vault, and the
+`is_vault_real` switch is where a deployment that wants one starts.
 
 ## What would change this
 

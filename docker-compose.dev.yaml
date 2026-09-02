@@ -56,6 +56,90 @@ services:
       retries: 10
       start_period: 10s
 
+  # ===== Wallet =============================================================
+  # The node's identity. It holds the private key and does the signing;
+  # alexandria never sees key material — see docs/adr/0003. The image is
+  # published elsewhere, so what this project owns is only how it runs:
+  # config/fafnir/wallet.yaml, and the database below.
+  fafnir-db:
+    image: postgres:17-alpine
+    container_name: alexandria-fafnir-db
+    restart: unless-stopped
+    environment:
+      # These have to match config/fafnir/db.json, which is where the wallet
+      # reads them from while is_vault_real is false.
+      POSTGRES_USER: ${FAFNIR_DB_USER:-fafnir}
+      POSTGRES_PASSWORD: ${FAFNIR_DB_PASSWORD:-fafnir}
+      POSTGRES_DB: ${FAFNIR_DB_NAME:-fafnir}
+    volumes:
+      - fafnir-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Migrations and key setup. A one-shot container that runs before the wallet
+  # and exits; the wallet waits on it completing rather than on it running.
+  fafnir-setup:
+    image: ${FAFNIR_IMAGE:-rmenendez8/fafnir:v0.2.0}
+    container_name: alexandria-fafnir-setup
+    depends_on:
+      fafnir-db:
+        condition: service_healthy
+    volumes:
+      - ./config/fafnir/wallet.yaml:/app/static/fafnir/config.yaml:ro
+      - ./config/fafnir/db.json:/app/vault/secrets/db.json:ro
+    environment:
+      RUST_BACKTRACE: 1
+      # With is_vault_real false the wallet reads its secrets off disk, and
+      # these two are how it finds them: the directory, and the file inside it
+      # holding the database credentials. It refuses to start without both.
+      VAULT_PATH: /app/vault/secrets
+      VAULT_APP_DB: db.json
+    env_file:
+      # Optional. The published wallet needs nothing else; this is the seam for
+      # a build of it that does, without editing this file.
+      - path: ./config/fafnir/env
+        required: false
+    command: ["setup", "--env-file", "/app/static/fafnir/config.yaml"]
+
+  fafnir-wallet:
+    image: ${FAFNIR_IMAGE:-rmenendez8/fafnir:v0.2.0}
+    container_name: alexandria-fafnir-wallet
+    restart: unless-stopped
+    depends_on:
+      fafnir-setup:
+        condition: service_completed_successfully
+    volumes:
+      - ./config/fafnir/wallet.yaml:/app/static/fafnir/config.yaml:ro
+      - ./config/fafnir/db.json:/app/vault/secrets/db.json:ro
+    environment:
+      RUST_BACKTRACE: 1
+      VAULT_PATH: /app/vault/secrets
+      VAULT_APP_DB: db.json
+    env_file:
+      - path: ./config/fafnir/env
+        required: false
+    command: ["start", "--env-file", "/app/static/fafnir/config.yaml"]
+    ports:
+      # 7001 inside, 7003 on the host: `task dev` runs the node on the host, and
+      # 7003 is what wallet_config.api.http.port in config/config.yaml says.
+      # Not 7002, and not 7000 or 7001 either: the eunomia checkout publishes
+      # its own wallets there, and a checkout that cannot run while its sibling
+      # is up is a checkout that does not stand alone. Point the node at one of
+      # those instead with ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT.
+      - "127.0.0.1:${FAFNIR_HOST_PORT:-7003}:7001"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7001/readiness"]
+      interval: 10s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   # ===== TLS ================================================================
   # Terminates https for both the node and Zitadel, using the local certificate
   # authority Caddy already keeps on this machine — mounted read-only, so the
@@ -180,3 +264,4 @@ volumes:
   postgres-data:
   zitadel-data:
   zitadel-machinekey:
+  fafnir-data:

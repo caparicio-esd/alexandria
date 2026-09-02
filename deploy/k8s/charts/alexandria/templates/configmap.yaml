@@ -48,7 +48,7 @@ data:
       api:
         http:
           protocol: {{ .Values.wallet.protocol | quote }}
-          url: {{ required "wallet.host is required" .Values.wallet.host | quote }}
+          url: {{ include "alexandria.walletHost" . | quote }}
           port: {{ .Values.wallet.port | quote }}
         grpc: null
         graphql: null

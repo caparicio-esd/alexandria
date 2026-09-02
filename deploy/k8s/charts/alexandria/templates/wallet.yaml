@@ -1,0 +1,156 @@
+{{- if .Values.wallet.deploy.enabled }}
+{{- $name := printf "%s-wallet" (include "alexandria.fullname" .) }}
+# The node's identity: it holds the private key and does the signing, and
+# alexandria never sees key material — see docs/adr/0003.
+#
+# Deployed here behind a flag, on the same reasoning as the database and the
+# identity provider: a first install needs one to have anything at all, and a
+# real deployment often has a wallet already. It is deliberately not a subchart
+# — the wallet publishes no chart of its own, and vendoring one would mean this
+# repository maintaining templates for software it does not own.
+#
+# It is reached only by the node, through the Service below. No Ingress routes
+# it, because nothing outside the cluster has business talking to it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-config
+  labels:
+    {{- include "alexandria.walletLabels" . | nindent 4 }}
+data:
+  config.yaml: |
+    http_host: &http_host
+      protocol: "http"
+      # What the process advertises inside its own pod; is_docker is what makes
+      # it listen on every interface, so the Service can reach it.
+      url: "127.0.0.1"
+      port: null
+      internal_port: {{ .Values.wallet.port | quote }}
+
+    hosts:
+      http: *http_host
+      grpc: null
+      graphql: null
+
+    db_config:
+      db_type: Postgres
+      url: {{ required "wallet.deploy.database.host is required" .Values.wallet.deploy.database.host | quote }}
+      port: {{ .Values.wallet.deploy.database.port | quote }}
+
+    is_docker: true
+    # False, so the credentials come from the Secret mounted below rather than
+    # from a real Vault. See deploy/k8s/README.md.
+    is_vault_real: false
+---
+{{- if not .Values.wallet.deploy.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}-secrets
+  labels:
+    {{- include "alexandria.walletLabels" . | nindent 4 }}
+type: Opaque
+stringData:
+  # The whole credential is one JSON document, because that is the shape the
+  # wallet's file-backed vault reads. VAULT_APP_DB below names this key.
+  db.json: |
+    {
+      "user": {{ .Values.wallet.deploy.database.user | quote }},
+      "password": {{ required "wallet.deploy.database.password is required" .Values.wallet.deploy.database.password | quote }},
+      "name": {{ .Values.wallet.deploy.database.name | quote }}
+    }
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "alexandria.walletLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.wallet.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "alexandria.walletSelectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "alexandria.walletLabels" . | nindent 4 }}
+spec:
+  # One. The wallet owns key material in a database it migrates on start, and
+  # nothing here has established that a second replica is safe.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "alexandria.walletSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Rolls the pods when the wallet's configuration changes. Hashed from
+        # the values rather than from the rendered ConfigMap: that ConfigMap is
+        # in this same file, and a template that hashes the file it lives in
+        # recurses until Helm gives up.
+        checksum/config: {{ toYaml .Values.wallet | sha256sum }}
+      labels:
+        {{- include "alexandria.walletLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        # Migrations and key setup, which must finish before the wallet serves.
+        # An init container rather than a Job: it reruns on every rollout, it is
+        # idempotent, and a Job would need a Helm hook and a delete policy to
+        # get the same behaviour.
+        - name: setup
+          image: "{{ .Values.wallet.deploy.image.repository }}:{{ .Values.wallet.deploy.image.tag }}"
+          imagePullPolicy: {{ .Values.wallet.deploy.image.pullPolicy }}
+          args: ["setup", "--env-file", "/app/static/fafnir/config.yaml"]
+          env:
+            {{- include "alexandria.walletEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "alexandria.walletMounts" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.wallet.deploy.resources | nindent 12 }}
+      containers:
+        - name: wallet
+          image: "{{ .Values.wallet.deploy.image.repository }}:{{ .Values.wallet.deploy.image.tag }}"
+          imagePullPolicy: {{ .Values.wallet.deploy.image.pullPolicy }}
+          args: ["start", "--env-file", "/app/static/fafnir/config.yaml"]
+          env:
+            {{- include "alexandria.walletEnv" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.wallet.port | int }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            {{- include "alexandria.walletMounts" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.wallet.deploy.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}-config
+        - name: secrets
+          secret:
+            secretName: {{ default (printf "%s-secrets" $name) .Values.wallet.deploy.existingSecret }}
+{{- end }}

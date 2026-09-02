@@ -78,7 +78,7 @@ connector that caches it stops asking, which is usually the cheaper trade.
 | [Task](https://taskfile.dev) | Every command below |
 | `openssl` | Generates the local certificate authority. Ships with macOS and every Linux |
 | `jq`, `curl` | Used by `scripts/zitadel-bootstrap.sh` to drive Zitadel's API |
-| A Fafnir wallet over HTTP | The node's identity. It comes up without one and reports itself not ready |
+| — | The Fafnir wallet is brought up by `docker-compose.dev.yaml`; the node comes up without one and reports itself not ready |
 
 Task is not optional any more, unlike earlier versions of this file: it loads
 `.env` and points `docker compose` at `docker-compose.dev.yaml`, so the commands

@@ -75,8 +75,14 @@ auth:
 
 wallet:
   protocol: http
+  # A wallet that already exists, the way the database and the provider do. The
+  # chart can deploy one — wallet.deploy.enabled — but it deploys it without a
+  # database of its own and with its key material in a Secret this chart
+  # renders, which is a test-cluster story rather than a deployment one.
   host: wallet.alexandria.svc.cluster.local
-  port: 7002
+  port: 7001
+  deploy:
+    enabled: false
 
 observability:
   logLevel: info

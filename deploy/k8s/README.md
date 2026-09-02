@@ -139,6 +139,29 @@ a second container port and a second Service port, and the Ingress routes
 neither. Scrape it from inside the cluster, with `serviceMonitor.enabled=true`
 if the Prometheus operator is installed.
 
+## The wallet
+
+The node's identity: it holds the private key and does the signing, and the node
+never sees key material.
+
+`wallet.deploy.enabled` puts one in the cluster, alongside the node. It is not a
+subchart — the wallet publishes no chart of its own — so what the chart carries
+is the minimum that runs it: a Deployment whose migration step is an init
+container, a Service, its configuration, and a Secret holding the database
+credential it reads while `is_vault_real` is false. No Ingress routes it.
+
+It does **not** deploy a database. Point `wallet.deploy.database.host` at one
+that exists; [values-dev.yaml](charts/alexandria/values-dev.yaml) creates a
+logical database for it inside the bundled Postgres with an initdb script.
+
+Two things make the bundled wallet a test-cluster story rather than a deployment
+one, and [values-prod.yaml](charts/alexandria/values-prod.yaml) leaves it off
+for both:
+
+- its key material lives in a PVC with no backup of its own, and losing it loses
+  the node's identity rather than merely its data;
+- its credential is a Secret this chart renders, not a Vault.
+
 ## Probes
 
 Liveness is `/healthz` and asks only whether the process is still serving. It

@@ -28,6 +28,14 @@ postgresql:
     # the zitadel values below can name it.
     postgresPassword: postgres
   primary:
+    initdb:
+      scripts:
+        # The wallet, unlike Zitadel, does not create its own database — its
+        # setup step runs migrations against one that already exists. So it is
+        # created here, once, when the volume is first initialised.
+        fafnir.sql: |
+          CREATE ROLE fafnir LOGIN PASSWORD 'fafnir';
+          CREATE DATABASE fafnir OWNER fafnir;
     persistence:
       # A local cluster is thrown away and rebuilt; a PVC left behind with a
       # password from the previous install is a confusing way to start.
@@ -137,10 +145,18 @@ auth:
   sessionKey: ""
 
 wallet:
-  # The wallet is not in the cluster. Change this to wherever yours runs; a
-  # Service name if it is in the cluster, an address if it is not.
-  host: wallet
-  port: 7002
+  # Empty: use the one deployed below, whose Service name the chart derives.
+  host: ""
+  deploy:
+    enabled: true
+    database:
+      # Its own logical database inside the Postgres above, created by the
+      # initdb script there. Separate from the node's and from Zitadel's: three
+      # schemas owned by three processes.
+      host: alexandria-postgresql
+      user: fafnir
+      name: fafnir
+      password: fafnir
 
 # Debug logging and human-readable output: on a laptop the reader is a person.
 observability:

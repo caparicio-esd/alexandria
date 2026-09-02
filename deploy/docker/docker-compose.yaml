@@ -84,9 +84,11 @@ services:
       # everyone out, and losing it means nobody can be logged in at all.
       ALEXANDRIA_AUTH_CONFIG_SESSION_KEY: ${ALEXANDRIA_AUTH_CONFIG_SESSION_KEY:?set ALEXANDRIA_AUTH_CONFIG_SESSION_KEY in .env}
 
+      # The wallet below, on this network. Override them to point at one that
+      # runs elsewhere; nothing here assumes it is the bundled one.
       ALEXANDRIA_WALLET_CONFIG_API_HTTP_PROTOCOL: ${WALLET_PROTOCOL:-http}
-      ALEXANDRIA_WALLET_CONFIG_API_HTTP_URL: ${WALLET_HOST:?set WALLET_HOST in .env}
-      ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT: ${WALLET_PORT:-7002}
+      ALEXANDRIA_WALLET_CONFIG_API_HTTP_URL: ${WALLET_HOST:-fafnir-wallet}
+      ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT: ${WALLET_PORT:-7001}
 
       ALEXANDRIA_OBSERVABILITY_LOG_LEVEL: ${LOG_LEVEL:-info}
       ALEXANDRIA_OBSERVABILITY_LOG_FORMAT: json
@@ -98,6 +100,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Not a hard dependency of correctness — the node comes up without a
+      # wallet and reports itself not ready — but starting them in this order
+      # means the common case comes up ready rather than converging into it.
+      fafnir-wallet:
+        condition: service_started
 
   postgres:
     image: postgres:17-alpine
@@ -112,6 +119,90 @@ services:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ===== Wallet =============================================================
+  # The node's identity: it holds the private key and does the signing, and
+  # alexandria never sees key material — see docs/adr/0003. Reached only by the
+  # node, on this network. It publishes no port and Caddy does not proxy it.
+  fafnir-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${FAFNIR_DB_USER:-fafnir}
+      POSTGRES_PASSWORD: ${FAFNIR_DB_PASSWORD:?set FAFNIR_DB_PASSWORD in .env}
+      POSTGRES_DB: ${FAFNIR_DB_NAME:-fafnir}
+    volumes:
+      - fafnir-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Renders the credential file the wallet reads while is_vault_real is false.
+  # A one-shot container rather than a committed file, so the password lives in
+  # .env and nowhere else: a second copy on disk is a second thing to rotate,
+  # and the failure when it drifts is an authentication error with no
+  # explanation attached.
+  fafnir-init:
+    image: alpine:3.22
+    command:
+      - sh
+      - -c
+      - |
+        cat > /vault/secrets/db.json <<JSON
+        {
+          "user": "$${POSTGRES_USER}",
+          "password": "$${POSTGRES_PASSWORD}",
+          "name": "$${POSTGRES_DB}"
+        }
+        JSON
+        chmod 0400 /vault/secrets/db.json
+    environment:
+      POSTGRES_USER: ${FAFNIR_DB_USER:-fafnir}
+      POSTGRES_PASSWORD: ${FAFNIR_DB_PASSWORD}
+      POSTGRES_DB: ${FAFNIR_DB_NAME:-fafnir}
+    volumes:
+      - fafnir-secrets:/vault/secrets
+
+  # Migrations and key setup. Runs before the wallet and exits.
+  fafnir-setup:
+    image: ${FAFNIR_IMAGE:-rmenendez8/fafnir:v0.2.0}
+    depends_on:
+      fafnir-db:
+        condition: service_healthy
+      fafnir-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./fafnir/wallet.yaml:/app/static/fafnir/config.yaml:ro
+      - fafnir-secrets:/app/vault/secrets:ro
+    environment:
+      # The directory the wallet's file-backed vault reads, and the file in it
+      # holding the database credentials. It refuses to start without both.
+      VAULT_PATH: /app/vault/secrets
+      VAULT_APP_DB: db.json
+    command: ["setup", "--env-file", "/app/static/fafnir/config.yaml"]
+
+  fafnir-wallet:
+    image: ${FAFNIR_IMAGE:-rmenendez8/fafnir:v0.2.0}
+    restart: unless-stopped
+    depends_on:
+      fafnir-setup:
+        condition: service_completed_successfully
+    volumes:
+      - ./fafnir/wallet.yaml:/app/static/fafnir/config.yaml:ro
+      - fafnir-secrets:/app/vault/secrets:ro
+    environment:
+      VAULT_PATH: /app/vault/secrets
+      VAULT_APP_DB: db.json
+    command: ["start", "--env-file", "/app/static/fafnir/config.yaml"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7001/readiness"]
+      interval: 10s
+      timeout: 2s
       retries: 10
       start_period: 10s
 
@@ -204,5 +295,7 @@ volumes:
   caddy-data:
   caddy-config:
   postgres-data:
+  fafnir-data:
+  fafnir-secrets:
   zitadel-data:
   zitadel-machinekey:

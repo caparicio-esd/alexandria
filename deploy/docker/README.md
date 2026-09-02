@@ -74,6 +74,9 @@ moving it. It owns every account in the deployment.
 
 ## What must be backed up
 
+- The `fafnir-data` volume, before anything else — it holds the node's private
+  key. Losing it does not lose data; it loses the node's identity, and every
+  credential ever issued to that identity with it.
 - The `postgres-data` volume — the node's own data.
 - The `zitadel-data` volume — every user, project and application.
 - `.env`, and `ZITADEL_MASTERKEY` above all. It encrypts everything Zitadel
@@ -91,6 +94,23 @@ certificate. Scrape metrics by joining the network, not by opening a port.
 
 ## The wallet
 
-`WALLET_HOST` in `.env` is not part of this stack. The node links to an SSI
-wallet at startup and comes up reporting itself not ready until it answers;
-point that variable at wherever yours actually runs.
+The node's identity. It holds the private key and does the signing — alexandria
+never sees key material — and the node comes up reporting itself not ready
+until it answers.
+
+It is in this stack, as `fafnir-wallet`, with a database of its own. It
+publishes no port and Caddy does not proxy it: the node is the only thing that
+talks to it. Its configuration is [fafnir/wallet.yaml](fafnir/wallet.yaml).
+
+To use a wallet that runs somewhere else instead, set `WALLET_HOST` and
+`WALLET_PORT` in `.env`. Nothing in the compose file assumes it is the bundled
+one.
+
+### Its credentials are a file, not a Vault
+
+`is_vault_real` is false, so the wallet reads its database credential from
+`/app/vault/secrets/db.json` — written into a volume by the `fafnir-init`
+container from `FAFNIR_DB_PASSWORD`, so the password exists in `.env` and
+nowhere else. That is the right trade for one host. A deployment that wants key
+material under a real Vault turns `is_vault_real` on and gives the wallet a
+Vault to talk to, which this file does not deploy.

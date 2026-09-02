@@ -116,3 +116,61 @@ external-secrets operator, or by hand — and the chart never sees the values.
 {{- define "alexandria.secretName" -}}
 {{- default (printf "%s-secrets" (include "alexandria.fullname" .)) .Values.existingSecret }}
 {{- end }}
+
+{{/*
+The wallet's environment and mounts, shared by its init container and its
+serving container: both read the same configuration and the same credential,
+and a copy of this in two places is a copy that will diverge.
+*/}}
+
+{{- define "alexandria.walletEnv" -}}
+- name: VAULT_PATH
+  value: /app/vault/secrets
+- name: VAULT_APP_DB
+  value: db.json
+{{- range $key, $value := .Values.wallet.deploy.extraEnv }}
+- name: {{ $key }}
+  value: {{ $value | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "alexandria.walletMounts" -}}
+- name: config
+  mountPath: /app/static/fafnir
+  readOnly: true
+- name: secrets
+  mountPath: /app/vault/secrets
+  readOnly: true
+{{- end }}
+
+{{/*
+The wallet's labels. A set of its own, not the node's: they share the chart and
+the release, and they must not share app.kubernetes.io/name, or the node's
+Service selects the wallet's pods and routes API traffic to a wallet.
+*/}}
+
+{{- define "alexandria.walletSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "alexandria.name" . }}-wallet
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "alexandria.walletLabels" -}}
+helm.sh/chart: {{ include "alexandria.chart" . }}
+{{ include "alexandria.walletSelectorLabels" . }}
+app.kubernetes.io/component: wallet
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Where the node reaches the wallet. The bundled one is a Service in this
+release; anything else names its own address.
+*/}}
+{{- define "alexandria.walletHost" -}}
+{{- if .Values.wallet.host }}
+{{- .Values.wallet.host }}
+{{- else if .Values.wallet.deploy.enabled }}
+{{- printf "%s-wallet" (include "alexandria.fullname" .) }}
+{{- else }}
+{{- required "wallet.host is required when wallet.deploy.enabled is false" .Values.wallet.host }}
+{{- end }}
+{{- end }}

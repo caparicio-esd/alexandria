@@ -55,7 +55,12 @@ wallet_config:
     http:
       protocol: "http"
       url: "127.0.0.1"
-      port: "7002"
+      # The wallet docker-compose.dev.yaml brings up, published on the host
+      # because `task dev` runs the node there. 7003 rather than 7002: the
+      # eunomia checkout publishes its wallets on 7000, 7001 and 7002, and this
+      # one has to be able to run alongside them. To use one of those instead,
+      # ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT=7002 task dev.
+      port: "7003"
     grpc: null
     graphql: null
   # How long startup blocks waiting for the wallet. Past it the node comes up

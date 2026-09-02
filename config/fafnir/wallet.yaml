@@ -1,0 +1,36 @@
+# The wallet's own configuration, read by the fafnir containers in
+# docker-compose.dev.yaml. Not alexandria's — that is config/config.yaml.
+#
+# It is here rather than inside the wallet's image because the wallet is a
+# dependency this project deploys but does not own: the image is published
+# elsewhere, and everything about how it runs here is this file.
+
+http_host: &http_host
+  protocol: "http"
+  # What the process binds and advertises inside its own container. Reaching it
+  # from outside is the compose file's business, not this file's: it publishes
+  # 7001 on the host as 7002, which is what wallet_config.api.http in
+  # config/config.yaml names.
+  url: "127.0.0.1"
+  port: null
+  internal_port: "7001"
+
+hosts:
+  http: *http_host
+  grpc: null
+  graphql: null
+
+db_config:
+  db_type: Postgres
+  # The service in docker-compose.dev.yaml. The wallet keeps its own database,
+  # separate from the node's, on the same reasoning as Zitadel's: two schemas
+  # owned by two processes, and no reason to share a blast radius.
+  url: "fafnir-db"
+  port: "5432"
+
+is_docker: true
+
+# False, so the credentials come from the file mounted at
+# /app/vault/secrets/db.json rather than from a real Vault. Development only —
+# see the note in deploy/docker/README.md about what production wants instead.
+is_vault_real: false

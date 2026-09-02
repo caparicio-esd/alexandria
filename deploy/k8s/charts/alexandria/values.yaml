@@ -185,14 +185,55 @@ zitadel:
   enabled: false
 
 # ===== The wallet ============================================================
-# Not deployed by this chart. The node links to it at startup and reports
+# The node's identity: it holds the private key and does the signing, and the
+# node never sees key material. The node links to it at startup and reports
 # itself not ready until it answers.
 wallet:
   kind: Fafnir
   protocol: http
+  # Where the node reaches it. Leave empty with deploy.enabled below to use the
+  # one this chart deploys; set it to point at a wallet that runs elsewhere.
   host: ""
-  port: 7002
+  port: 7001
   startupTimeout: 30s
+
+  # Deploy a wallet alongside the node. Off by default, on the same reasoning
+  # as the database and the identity provider: a first install needs one to
+  # have anything at all, and a real deployment often has one already.
+  #
+  # Not a subchart — the wallet publishes no chart of its own — so what is here
+  # is the minimum that runs it: a Deployment with the migration step as an
+  # init container, a Service the node reaches it on, and its configuration.
+  # Nothing routes it from outside the cluster.
+  deploy:
+    enabled: false
+    image:
+      repository: rmenendez8/fafnir
+      tag: v0.2.0
+      pullPolicy: IfNotPresent
+
+    # The wallet keeps its own database, separate from the node's: two schemas
+    # owned by two processes, and no reason to share a blast radius. This chart
+    # does not deploy it — point at one that exists.
+    database:
+      host: ""
+      port: 5432
+      user: fafnir
+      name: fafnir
+      # Rendered into a Secret as the JSON document the wallet's file-backed
+      # vault reads. Use existingSecret instead for anything beyond a test
+      # cluster; it must carry a `db.json` key of that same shape.
+      password: ""
+
+    existingSecret: ""
+    extraEnv: {}
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 512Mi
 
 # ===== Observability =========================================================
 observability:
