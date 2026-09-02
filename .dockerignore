@@ -14,3 +14,12 @@ coverage.out
 *.log
 .env
 .DS_Store
+
+# Deployment files. Nothing in the image is built from them.
+deploy/
+k8s/
+docker-compose.dev.yaml
+Caddyfile
+scripts/
+docs/
+.certs/

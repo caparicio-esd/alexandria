@@ -1,0 +1,112 @@
+# Deployment file for the Docker Compose stack in this directory.
+#
+# It holds the settings that are the same in every deployment. Everything that
+# differs — the domain names, the database password, the OAuth client secret,
+# the session key — is set from the environment in docker-compose.yaml, which
+# reads it from .env. The variable for any key is ALEXANDRIA_ plus the dotted
+# path, upper-cased: ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD sets
+# common_config.db.password.
+#
+# So this file is committed and carries no secrets, and the placeholders below
+# are never the values that run — the compose file overrides each of them.
+
+common_config:
+  hosts:
+    http:
+      # As the outside world sees this node, through Caddy. Overridden with
+      # ALEXANDRIA_COMMON_CONFIG_HOSTS_HTTP_URL.
+      protocol: "https"
+      url: "alexandria.example.org"
+      port: "443"
+      # What the process itself binds, in the clear, on the compose network.
+      # Caddy is the only thing that reaches it.
+      internal_port: "1234"
+    grpc: null
+    graphql: null
+  db:
+    db_type: Postgres
+    # Overridden in full from the environment; these are placeholders so the
+    # document is well-formed, not credentials.
+    url: "postgres"
+    port: "5432"
+    user: "alexandria"
+    password: ""
+    name: "alexandria"
+  api:
+    version: "v1"
+    openapi_path: "./static/specs/openapi/merged_openapi.json"
+  connection:
+    is_local: false
+    is_prod: true
+    is_vault_real: false
+    # Caddy terminates TLS in front, which is what lets the session cookie
+    # carry Secure while the process speaks plain http.
+    has_tls_proxy: true
+
+wallet_config:
+  wallet: Fafnir
+  api:
+    http:
+      protocol: "http"
+      url: "wallet"
+      port: "7002"
+    grpc: null
+    graphql: null
+  startup_link_timeout: "30s"
+
+auth_config:
+  enabled: true
+  # All four of these are deployment addresses, set from the environment.
+  issuer: "https://auth.example.org"
+  # How this process reaches the provider from inside the network, which is not
+  # the address the browser uses.
+  internal_issuer: "http://zitadel:8080"
+  client_id: ""
+  client_secret: ""
+  redirect_url: "https://alexandria.example.org/api/v1/auth/callback"
+  app_url: "https://alexandria.example.org/"
+  post_logout_url: ""
+  audiences: []
+  scopes: ["openid", "profile", "email", "offline_access"]
+  introspect: "fallback"
+  roles_claim: "urn:zitadel:iam:org:project:roles"
+  required_roles: []
+  jwks_refresh: "15m"
+  http_timeout: "10s"
+  # Longer than in development: on a cold `docker compose up` the node and
+  # Zitadel start together, and Zitadel's first run migrates its database.
+  startup_discovery_timeout: "60s"
+  session:
+    name: "alexandria_session"
+    domain: ""
+    path: "/"
+    secure: true
+    same_site: "lax"
+    ttl: "12h"
+    # Set from the environment, and refused empty here: with no key the node
+    # seals sessions with a random one and every restart logs everybody out.
+    key: ""
+
+observability:
+  log_level: "info"
+  # Structured, because in a deployment the reader is a log pipeline.
+  log_format: "json"
+  # Both live on the internal port below, which Caddy does not proxy: they are
+  # reachable from inside the network and from nowhere else.
+  metrics: true
+  pprof: false
+  port: "2112"
+
+client_config:
+  class_id: "Provider"
+  display: null
+
+verify_req_config:
+  is_cert_allowed: false
+  auto_approve_cert: false
+  vcs_requested: [DataSpaceParticipant]
+
+did_config:
+  type: Jwk
+
+gaia_config: null

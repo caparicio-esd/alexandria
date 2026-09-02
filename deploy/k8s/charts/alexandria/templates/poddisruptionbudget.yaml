@@ -1,0 +1,20 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# Only meaningful above one replica: a budget of "at least 1 available" against
+# a single pod blocks every node drain instead of protecting anything.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "alexandria.fullname" . }}
+  labels:
+    {{- include "alexandria.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ . }}
+  {{- end }}
+  {{- with .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "alexandria.selectorLabels" . | nindent 6 }}
+{{- end }}

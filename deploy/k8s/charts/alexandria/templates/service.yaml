@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "alexandria.fullname" . }}
+  labels:
+    {{- include "alexandria.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+    {{- if .Values.observability.port }}
+    - name: metrics
+      port: {{ .Values.observability.port }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "alexandria.selectorLabels" . | nindent 4 }}

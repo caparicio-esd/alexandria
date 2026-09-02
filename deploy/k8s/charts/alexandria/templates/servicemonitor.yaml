@@ -1,0 +1,22 @@
+{{- if .Values.serviceMonitor.enabled }}
+# Needs the Prometheus operator's CRDs in the cluster. Off by default because a
+# chart that renders a resource whose kind does not exist fails to install, and
+# metrics are worth less than the install succeeding.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "alexandria.fullname" . }}
+  labels:
+    {{- include "alexandria.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "alexandria.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

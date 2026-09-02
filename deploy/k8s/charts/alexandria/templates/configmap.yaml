@@ -1,0 +1,112 @@
+# The node's deployment file, mounted at /etc/alexandria/config.yaml — which is
+# where it looks with no --config flag and no $ALEXANDRIA_CONFIG.
+#
+# Only the non-secret half is here. Passwords, the client secret and the session
+# key come from a Secret as environment variables, which override the matching
+# key: the variable is ALEXANDRIA_ plus the dotted path, upper-cased.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "alexandria.fullname" . }}-config
+  labels:
+    {{- include "alexandria.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    common_config:
+      hosts:
+        http:
+          # As the outside world sees this node — through the ingress.
+          protocol: {{ include "alexandria.scheme" . | quote }}
+          url: {{ .Values.ingress.host | quote }}
+          port: {{ if .Values.ingress.tls.enabled }}"443"{{ else }}"80"{{ end }}
+          # What the container binds, in the clear. The ingress controller is
+          # the only thing that reaches it.
+          internal_port: {{ .Values.service.port | quote }}
+        grpc: null
+        graphql: null
+      db:
+        db_type: Postgres
+        url: {{ include "alexandria.databaseHost" . | quote }}
+        port: {{ .Values.database.port | quote }}
+        user: {{ .Values.database.user | quote }}
+        # From the Secret, as ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD.
+        password: ""
+        name: {{ .Values.database.name | quote }}
+      api:
+        version: "v1"
+        openapi_path: "./static/specs/openapi/merged_openapi.json"
+      connection:
+        is_local: false
+        is_prod: {{ .Values.production }}
+        is_vault_real: {{ .Values.vault.enabled }}
+        # The ingress terminates TLS, which is what lets the session cookie
+        # carry Secure while the container speaks plain http.
+        has_tls_proxy: true
+
+    wallet_config:
+      wallet: {{ .Values.wallet.kind | quote }}
+      api:
+        http:
+          protocol: {{ .Values.wallet.protocol | quote }}
+          url: {{ required "wallet.host is required" .Values.wallet.host | quote }}
+          port: {{ .Values.wallet.port | quote }}
+        grpc: null
+        graphql: null
+      startup_link_timeout: {{ .Values.wallet.startupTimeout | quote }}
+
+    auth_config:
+      enabled: {{ .Values.auth.enabled }}
+      issuer: {{ include "alexandria.issuer" . | quote }}
+      internal_issuer: {{ include "alexandria.internalIssuer" . | quote }}
+      # Zitadel mints the client id; it cannot be chosen, so it is a value of
+      # this release rather than of this chart. The secret next to it comes
+      # from the Secret.
+      client_id: {{ .Values.auth.clientId | quote }}
+      client_secret: ""
+      redirect_url: {{ printf "%s/api/v1/auth/callback" (include "alexandria.externalURL" .) | quote }}
+      app_url: {{ printf "%s/" (include "alexandria.externalURL" .) | quote }}
+      post_logout_url: {{ .Values.auth.postLogoutURL | quote }}
+      audiences: {{ toJson .Values.auth.audiences }}
+      scopes: {{ toJson .Values.auth.scopes }}
+      introspect: {{ .Values.auth.introspect | quote }}
+      roles_claim: {{ .Values.auth.rolesClaim | quote }}
+      required_roles: {{ toJson .Values.auth.requiredRoles }}
+      jwks_refresh: {{ .Values.auth.jwksRefresh | quote }}
+      http_timeout: {{ .Values.auth.httpTimeout | quote }}
+      # Longer than a laptop needs: on a cold namespace the node and the
+      # provider start together, and the provider's first run migrates its
+      # database. Past this the node comes up anyway, reports itself not ready,
+      # and answers 503 rather than 401 — which is what the readiness probe
+      # below is reading.
+      startup_discovery_timeout: {{ .Values.auth.startupDiscoveryTimeout | quote }}
+      session:
+        name: {{ .Values.auth.session.name | quote }}
+        domain: {{ .Values.auth.session.domain | quote }}
+        path: "/"
+        secure: {{ .Values.ingress.tls.enabled }}
+        same_site: {{ .Values.auth.session.sameSite | quote }}
+        ttl: {{ .Values.auth.session.ttl | quote }}
+        # From the Secret. Empty here and empty there means the node seals with
+        # a random key, and every restarted pod ends every session it held.
+        key: ""
+
+    observability:
+      log_level: {{ .Values.observability.logLevel | quote }}
+      log_format: {{ .Values.observability.logFormat | quote }}
+      metrics: {{ .Values.observability.metrics }}
+      pprof: {{ .Values.observability.pprof }}
+      port: {{ .Values.observability.port | quote }}
+
+    client_config:
+      class_id: {{ .Values.clientClass | quote }}
+      display: null
+
+    verify_req_config:
+      is_cert_allowed: {{ .Values.verification.certAllowed }}
+      auto_approve_cert: {{ .Values.verification.autoApproveCert }}
+      vcs_requested: {{ toJson .Values.verification.credentials }}
+
+    did_config:
+      type: {{ .Values.did.type | quote }}
+
+    gaia_config: null

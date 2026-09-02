@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "alexandria.fullname" . }}
+  labels:
+    {{- include "alexandria.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "alexandria.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Rolls the pods when the deployment file changes. Without it a
+        # `helm upgrade` that only edits config leaves every pod running the
+        # previous one, because nothing in the pod spec changed.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "alexandria.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "alexandria.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: alexandria
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            {{- if .Values.observability.port }}
+            - name: metrics
+              containerPort: {{ .Values.observability.port | int }}
+              protocol: TCP
+            {{- end }}
+          env:
+            # Everything below overrides the matching key in the ConfigMap: the
+            # variable is ALEXANDRIA_ plus the dotted path, upper-cased. Only
+            # the secrets are here; the rest is in the file, where it can be
+            # read without decoding a Secret.
+            {{- if .Values.postgresql.enabled }}
+            - name: ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  # The subchart owns this Secret and its key names.
+                  name: {{ .Release.Name }}-postgresql
+                  key: password
+            {{- else }}
+            - name: ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "alexandria.secretName" . }}
+                  key: ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD
+            {{- end }}
+            {{- if .Values.auth.enabled }}
+            - name: ALEXANDRIA_AUTH_CONFIG_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "alexandria.secretName" . }}
+                  key: ALEXANDRIA_AUTH_CONFIG_CLIENT_SECRET
+            - name: ALEXANDRIA_AUTH_CONFIG_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "alexandria.secretName" . }}
+                  key: ALEXANDRIA_AUTH_CONFIG_SESSION_KEY
+            {{- end }}
+            {{- range $key, $value := .Values.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          livenessProbe:
+            # Liveness asks only whether the process is still serving. It must
+            # not depend on the database or the identity provider: a provider
+            # that goes away would otherwise restart every pod in a loop, which
+            # is strictly worse than serving 503 until it comes back.
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            # Readiness does depend on them, which is the point: the node comes
+            # up before its wallet and its provider answer, and reports itself
+            # not ready until they do. failureThreshold is generous because a
+            # cold namespace starts everything at once.
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alexandria
+              readOnly: true
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "alexandria.fullname" . }}-config
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

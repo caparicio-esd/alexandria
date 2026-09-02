@@ -1,0 +1,42 @@
+{{ .Chart.Name }} {{ .Chart.Version }} — release {{ .Release.Name }} in {{ .Release.Namespace }}
+
+The node is at {{ include "alexandria.externalURL" . }}
+{{- if .Values.auth.enabled }}
+Its identity provider is at {{ include "alexandria.issuer" . }}
+{{- end }}
+
+{{- if and .Values.auth.enabled (not .Values.auth.clientId) }}
+
+  ---------------------------------------------------------------------------
+  This release has no OAuth client id, so every route under /api/v1 is refused.
+
+  That is expected on a first install and not something the chart can avoid:
+  the identity provider mints the client id — it cannot be chosen — so the
+  provider has to exist before the node can be told what it is. Register the
+  node and upgrade with what you get back:
+
+      kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-zitadel 8080:8080
+
+      ZITADEL_API=http://127.0.0.1:8080 \
+      ZITADEL_ISSUER={{ include "alexandria.issuer" . }} \
+      REDIRECT_URI={{ include "alexandria.externalURL" . }}/api/v1/auth/callback \
+      APP_URL={{ include "alexandria.externalURL" . }}/ \
+      ENV_FILE=/tmp/alexandria.env \
+        bash scripts/zitadel-bootstrap.sh
+
+  Then set auth.clientId and auth.clientSecret from that file and upgrade.
+  k8s/README.md has the whole sequence.
+  ---------------------------------------------------------------------------
+{{- end }}
+
+Watch it come up — it reports itself not ready until its database, its wallet
+and its provider all answer, which is the point of the readiness probe:
+
+    kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "alexandria.fullname" . }}
+    kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} -f
+
+{{- if not .Values.ingress.tls.enabled }}
+
+Note: TLS is off, so the session cookie cannot carry Secure. Fine locally, not
+a deployment.
+{{- end }}

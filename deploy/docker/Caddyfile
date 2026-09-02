@@ -1,0 +1,55 @@
+# TLS terminator for the deployment.
+#
+# Unlike the development Caddyfile at the repository root, this one issues from
+# a public ACME endpoint, so the two names below must resolve to this host over
+# the public internet before it will succeed: Let's Encrypt validates by
+# connecting back on port 80.
+#
+# The names come from the environment, which compose fills from .env — Caddy
+# substitutes {$VAR} at load. Nothing deployment-specific is written here, so
+# this file is committed unchanged.
+{
+	# Where expiry warnings and problem reports go.
+	email {$ACME_EMAIL}
+
+	# Nothing reconfigures Caddy at runtime, so the admin API is one listener
+	# that need not exist.
+	admin off
+}
+
+(hardening) {
+	header {
+		# The node is only ever reached over TLS once a certificate exists;
+		# saying so keeps a browser from trying plain http first.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Caddy's own advertisement of itself is not information a client needs.
+		-Server
+	}
+}
+
+# The node. It listens in the clear on the compose network; the session cookie
+# still carries Secure, because what the browser speaks is this.
+{$ALEXANDRIA_DOMAIN} {
+	import hardening
+
+	# /metrics and /debug/pprof live on the node's internal port, which is not
+	# proxied at all — they are reachable from inside the network and from
+	# nowhere else.
+	# Caddy forwards the client's Host along with X-Forwarded-For, -Proto and
+	# -Host by default, which is what the OAuth redirect and the cookie domain
+	# are built from, so nothing has to be set here.
+	reverse_proxy alexandria:1234
+}
+
+# The identity provider. Proxied rather than published so it shares this
+# certificate and this hardening, and so Zitadel itself never terminates TLS.
+{$AUTH_DOMAIN} {
+	import hardening
+
+	# h2c, not plain http: Zitadel's console and management API are gRPC over
+	# cleartext HTTP/2, and a proxy that downgrades them to HTTP/1.1 serves the
+	# login pages correctly while every API call fails.
+	reverse_proxy h2c://zitadel:8080
+}

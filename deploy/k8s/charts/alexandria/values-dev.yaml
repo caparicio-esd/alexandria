@@ -1,0 +1,157 @@
+# A whole node in a local cluster — kind, minikube, k3d — reachable over
+# nip.io, which resolves anything.127.0.0.1.nip.io to 127.0.0.1 and so needs no
+# entry in /etc/hosts and no DNS of your own.
+#
+#   helm dependency update k8s/charts/alexandria
+#   helm upgrade --install alexandria k8s/charts/alexandria \
+#     -f k8s/charts/alexandria/values-dev.yaml \
+#     --set auth.sessionKey=$(openssl rand -hex 32) \
+#     --namespace alexandria --create-namespace
+#
+# If the ingress controller is not on 127.0.0.1 — a cluster on another machine,
+# or minikube without `minikube tunnel` — put its address in the names instead:
+#
+#   --set ingress.host=alexandria.$(minikube ip).nip.io \
+#   --set auth.host=auth.$(minikube ip).nip.io
+#
+# See k8s/README.md for what to do after the first install: the identity
+# provider mints the client id, so there are two passes.
+
+# Everything in one namespace, including the things a real deployment would
+# not let a chart own.
+postgresql:
+  enabled: true
+  auth:
+    password: alexandria
+    # Zitadel's setup job creates its own database and role inside this same
+    # instance, and that needs an administrator. Pinned rather than generated so
+    # the zitadel values below can name it.
+    postgresPassword: postgres
+  primary:
+    persistence:
+      # A local cluster is thrown away and rebuilt; a PVC left behind with a
+      # password from the previous install is a confusing way to start.
+      enabled: false
+
+zitadel:
+  enabled: true
+  zitadel:
+    # 32 characters exactly. Development-only, and committed on purpose: it
+    # encrypts what this throwaway instance stores and nothing else.
+    masterkey: "MasterkeyNeedsToHave32Characters"
+    configmapConfig:
+      # What the browser sees. It must match auth.host above exactly, or the
+      # node's discovery of this issuer is refused rather than trusted.
+      ExternalDomain: auth.127.0.0.1.nip.io
+      ExternalPort: 80
+      # Plain http locally — see the ingress note below — so the URLs Zitadel
+      # mints have to say http too.
+      ExternalSecure: false
+      TLS:
+        Enabled: false
+      # Zitadel brings no database of its own. Its chart can deploy one, but
+      # that subchart is the same Bitnami chart as above and names its
+      # resources the same way — two releases of it under one release name
+      # collide silently — so instead it shares the instance above with a
+      # logical database of its own, which its setup job creates.
+      Database:
+        Postgres:
+          Host: alexandria-postgresql
+          Port: 5432
+          Database: zitadel
+          MaxOpenConns: 10
+          MaxIdleConns: 5
+          MaxConnLifetime: 30m
+          MaxConnIdleTime: 5m
+          User:
+            Username: zitadel
+            SSL:
+              Mode: disable
+          Admin:
+            Username: postgres
+            SSL:
+              Mode: disable
+      DefaultInstance:
+        Features:
+          LoginV2:
+            # Zitadel v4 redirects to a login UI that ships as a separate
+            # deployment. Off keeps the classic login, which is built into the
+            # image and needs nothing else running.
+            Required: false
+    secretConfig:
+      Database:
+        Postgres:
+          User:
+            Password: zitadel
+          Admin:
+            # The superuser password pinned on the postgresql subchart above.
+            Password: postgres
+
+  # Explicitly off: see the Database block above.
+  postgresql:
+    enabled: false
+  # The v4 login UI ships as a deployment of its own. The classic login is
+  # built into the image and needs nothing else running, which is one fewer
+  # pod on a laptop — and it is what LoginV2.Required: false above selects.
+  login:
+    enabled: false
+
+  ingress:
+    enabled: true
+    # Injects the backend-protocol annotation nginx needs to speak h2c to
+    # Zitadel: its console and management API are gRPC over cleartext HTTP/2,
+    # and a controller that downgrades them to HTTP/1.1 serves the login pages
+    # correctly while every API call fails.
+    controller: nginx
+    className: nginx
+    hosts:
+      - host: auth.127.0.0.1.nip.io
+        paths:
+          - path: /
+            pathType: Prefix
+
+ingress:
+  className: nginx
+  host: alexandria.127.0.0.1.nip.io
+  tls:
+    # Plain http locally. Issuing a real certificate for a nip.io name from a
+    # cluster with no public address does not work, and a self-signed one means
+    # every client needs the root — which is the development story the
+    # repository already has, with Caddy and `task tls:ca`, outside Kubernetes.
+    #
+    # The session cookie loses its Secure attribute as a result, which is the
+    # one way this differs from a deployment. Nothing else does.
+    enabled: false
+
+auth:
+  host: auth.127.0.0.1.nip.io
+  # Reached in-cluster, not out through the ingress and back: hairpin depends
+  # on the load balancer, and a local one usually does not do it.
+  internalIssuer: http://alexandria-zitadel:8080
+  # Filled in on the second pass, after the node is registered in Zitadel.
+  clientId: ""
+  clientSecret: ""
+  # Pass it on the command line — `--set auth.sessionKey=$(openssl rand -hex 32)`
+  # — rather than writing one here, so a committed file carries no key that
+  # somebody might reuse where it matters.
+  sessionKey: ""
+
+wallet:
+  # The wallet is not in the cluster. Change this to wherever yours runs; a
+  # Service name if it is in the cluster, an address if it is not.
+  host: wallet
+  port: 7002
+
+# Debug logging and human-readable output: on a laptop the reader is a person.
+observability:
+  logLevel: debug
+  logFormat: text
+
+production: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi

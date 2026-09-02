@@ -1,0 +1,247 @@
+# Defaults for the alexandria chart.
+#
+# What must be set for an install to succeed, and has no sensible default:
+#
+#   ingress.host          the name the node is reached at
+#   auth.host             the name its identity provider is reached at
+#   auth.sessionKey       openssl rand -hex 32
+#   wallet.host           the SSI wallet this node links to
+#
+# Everything under auth.* is a value of the *release*, not of the chart: the
+# identity provider mints the client id and it cannot be chosen, so no committed
+# defaults can be right. See k8s/README.md for how to get them.
+
+# ===== Image =================================================================
+image:
+  repository: quay.io/alexandria/alexandria
+  pullPolicy: IfNotPresent
+  # Defaults to the chart's appVersion. Pin a tag per release rather than
+  # tracking a moving one — the tag is what a rollback rolls back to.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ===== Scale =================================================================
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: ~
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  maxUnavailable: ~
+
+# Deliberately modest, and deliberately present: without a request the scheduler
+# treats the pod as free and packs nodes until something is evicted. Measure
+# before raising them.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    # No CPU limit. Throttling a request-serving process to save cycles it was
+    # not going to use anyway buys latency spikes and nothing else; the request
+    # above is what the scheduler needs.
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+# ===== Security ==============================================================
+# The image is distroless and already runs as nonroot; these say so to the API
+# server, so the pod is refused rather than silently privileged if the image
+# ever changes underneath.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ===== Network ===============================================================
+service:
+  type: ClusterIP
+  # What the container binds, in the clear. The ingress is what terminates TLS.
+  port: 1234
+
+ingress:
+  enabled: true
+  className: nginx
+  # The name the node is reached at. Required.
+  host: ""
+  annotations: {}
+  tls:
+    enabled: true
+    # A cert-manager ClusterIssuer, e.g. letsencrypt-prod. Empty means the
+    # certificate is provided some other way and only referenced.
+    clusterIssuer: ""
+    # Defaults to <release>-alexandria-tls.
+    secretName: ""
+
+# ===== Database ==============================================================
+# Ignored when postgresql.enabled is true, except for name and user, which the
+# subchart is configured with below and which the node reads from here.
+database:
+  host: ""
+  port: 5432
+  user: alexandria
+  name: alexandria
+  # Only read when postgresql.enabled is false. With the bundled subchart the
+  # password lives in the Secret that chart creates and is read from there.
+  password: ""
+
+# The bundled Postgres. Off by default: a real deployment usually has a managed
+# database, and this one keeps its data in a PVC with no backup of its own.
+# Turning it on needs `helm dependency update` first.
+postgresql:
+  enabled: false
+  auth:
+    username: alexandria
+    database: alexandria
+    # Set this when enabling the subchart, or the chart generates one and a
+    # later upgrade that regenerates it locks the node out of its own data.
+    password: ""
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# ===== Identity ==============================================================
+auth:
+  enabled: true
+  # The name the identity provider is reached at, from the browser. The issuer
+  # is derived from it; set `issuer` instead to give the whole URL.
+  host: ""
+  issuer: ""
+  # How the node reaches the same provider from inside the cluster, when that
+  # differs. Derived from the bundled Zitadel when that is on; going out
+  # through the ingress and back in depends on the load balancer supporting
+  # hairpin, which not all do.
+  internalIssuer: ""
+
+  # Minted by the provider when the node is registered as an application. See
+  # k8s/README.md — this is a value of the release, and clientSecret belongs in
+  # a values file that is not committed, or in an existingSecret.
+  clientId: ""
+  clientSecret: ""
+
+  # 32 bytes of hex, sealing every session cookie. It must be the same in every
+  # replica and stable across upgrades: generate once, keep. Required.
+  sessionKey: ""
+
+  # The "aud" values an access token must carry. Empty accepts any audience,
+  # which is only safe while this node is the sole relying party. In Zitadel
+  # the value is the project id.
+  audiences: []
+  scopes: ["openid", "profile", "email", "offline_access"]
+  # never | fallback | always. Zitadel issues opaque tokens unless the
+  # application asks for JWTs; fallback verifies a JWT locally and introspects
+  # anything else, so both work without a setting to get wrong.
+  introspect: fallback
+  rolesClaim: "urn:zitadel:iam:org:project:roles"
+  # Roles every caller must hold, whatever route they ask for. Empty means
+  # authentication alone is the bar.
+  requiredRoles: []
+  jwksRefresh: 15m
+  httpTimeout: 10s
+  # Past this the node comes up anyway, reports itself not ready, and answers
+  # 503 rather than 401 until the provider is reachable — which is what the
+  # readiness probe reads.
+  startupDiscoveryTimeout: 60s
+  postLogoutURL: ""
+  session:
+    name: alexandria_session
+    # Empty means host-only, which is what a single-host deployment wants.
+    domain: ""
+    sameSite: lax
+    ttl: 12h
+
+# The bundled Zitadel. Off by default for the same reason as the database, and
+# more so: an identity provider is usually shared across services rather than
+# owned by one chart. Turning it on needs `helm dependency update` and the
+# values its own chart documents.
+zitadel:
+  enabled: false
+
+# ===== The wallet ============================================================
+# Not deployed by this chart. The node links to it at startup and reports
+# itself not ready until it answers.
+wallet:
+  kind: Fafnir
+  protocol: http
+  host: ""
+  port: 7002
+  startupTimeout: 30s
+
+# ===== Observability =========================================================
+observability:
+  logLevel: info
+  # Structured, because in a cluster the reader is a log pipeline.
+  logFormat: json
+  metrics: true
+  # A heap dump says a lot about what a process is holding.
+  pprof: false
+  # The internal listener, carrying /metrics and the pprof routes. Never routed
+  # by the ingress; empty switches the listener off entirely.
+  port: 2112
+
+serviceMonitor:
+  # Needs the Prometheus operator's CRDs. Off by default: a chart that renders
+  # a kind the cluster does not know fails to install.
+  enabled: false
+  interval: 30s
+  labels: {}
+
+# ===== The node's own identity ===============================================
+production: true
+
+vault:
+  # The node resolves key material from Vault when this is on. Off means it
+  # uses the in-process development resolver, which is not a production story.
+  enabled: false
+
+clientClass: Provider
+
+verification:
+  certAllowed: false
+  autoApproveCert: false
+  credentials: [DataSpaceParticipant]
+
+did:
+  type: Jwk
+
+# ===== Escape hatches ========================================================
+# Point at a Secret managed elsewhere — sealed-secrets, external-secrets, by
+# hand — instead of rendering one from the values above. It must carry the same
+# keys the chart would have written; see templates/secret.yaml.
+existingSecret: ""
+
+# Plain environment variables, and ones that belong in the rendered Secret.
+# Anything the node reads: the variable is ALEXANDRIA_ plus the dotted config
+# path, upper-cased.
+extraEnv: {}
+extraSecretEnv: {}
+
+extraVolumes: []
+extraVolumeMounts: []

@@ -1,0 +1,208 @@
+# Deployment on a single machine, with Docker.
+#
+# Everything the node needs is here — its database, its identity provider, and
+# the proxy that terminates TLS for both — so a host with Docker, a public
+# address and two DNS names is the whole prerequisite list. It is deliberately
+# not docker-compose.dev.yaml with the values changed: the development file runs
+# the node on the host with a local certificate authority and committed
+# passwords, and none of that survives contact with a real deployment.
+#
+# Before the first `docker compose up`:
+#
+#   cp .env.example .env       and fill it in — see the comments there
+#   docker compose up -d       postgres, zitadel and caddy come up first
+#   bash ../../scripts/zitadel-bootstrap.sh   registers the node, writes .env
+#   docker compose up -d       again, now that the node has its credentials
+#
+# The compose file is versioned; .env is not. It carries every secret.
+
+name: alexandria
+
+services:
+  # ===== Proxy ==============================================================
+  # The only service that publishes a port. Everything else is reachable on
+  # this network and nowhere else, which is what keeps Postgres and Zitadel's
+  # database off the public internet without a firewall rule to remember.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3. Harmless if the host firewall drops it; clients fall back.
+      - "443:443/udp"
+    environment:
+      ALEXANDRIA_DOMAIN: ${ALEXANDRIA_DOMAIN:?set ALEXANDRIA_DOMAIN in .env}
+      AUTH_DOMAIN: ${AUTH_DOMAIN:?set AUTH_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The issued certificates and the ACME account key. Losing this volume
+      # means re-issuing everything, which Let's Encrypt rate-limits.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - alexandria
+      - zitadel
+
+  # ===== The node ===========================================================
+  alexandria:
+    image: ${ALEXANDRIA_IMAGE:-quay.io/alexandria/alexandria:latest}
+    restart: unless-stopped
+    # The deployment file. Read-only, because the node never writes to it, and
+    # mounted rather than baked into the image so the same published image runs
+    # every deployment.
+    volumes:
+      - ./config.yaml:/etc/alexandria/config.yaml:ro
+    environment:
+      # Everything below overrides the matching key in config.yaml: the
+      # variable is ALEXANDRIA_ plus the dotted path, upper-cased. What lives
+      # here rather than in the file is what differs per deployment, and what
+      # must not be committed.
+      ALEXANDRIA_COMMON_CONFIG_HOSTS_HTTP_URL: ${ALEXANDRIA_DOMAIN}
+      ALEXANDRIA_COMMON_CONFIG_DB_URL: postgres
+      ALEXANDRIA_COMMON_CONFIG_DB_PORT: "5432"
+      ALEXANDRIA_COMMON_CONFIG_DB_USER: ${POSTGRES_USER:-alexandria}
+      ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      ALEXANDRIA_COMMON_CONFIG_DB_NAME: ${POSTGRES_DB:-alexandria}
+
+      # The issuer the browser is redirected to, and the address this process
+      # uses to reach the same provider from inside the network. They differ
+      # here — public https name outside, plain http service name inside — and
+      # the node is built for exactly that split.
+      ALEXANDRIA_AUTH_CONFIG_ISSUER: https://${AUTH_DOMAIN}
+      ALEXANDRIA_AUTH_CONFIG_INTERNAL_ISSUER: http://zitadel:8080
+      ALEXANDRIA_AUTH_CONFIG_REDIRECT_URL: https://${ALEXANDRIA_DOMAIN}/api/v1/auth/callback
+      ALEXANDRIA_AUTH_CONFIG_APP_URL: https://${ALEXANDRIA_DOMAIN}/
+      # Written by scripts/zitadel-bootstrap.sh, which cannot run until Zitadel
+      # is up. Empty on the very first `up`; the node then refuses to serve
+      # authenticated routes, which is the correct behaviour until it has
+      # credentials.
+      ALEXANDRIA_AUTH_CONFIG_CLIENT_ID: ${ALEXANDRIA_AUTH_CONFIG_CLIENT_ID:-}
+      ALEXANDRIA_AUTH_CONFIG_CLIENT_SECRET: ${ALEXANDRIA_AUTH_CONFIG_CLIENT_SECRET:-}
+      # 32 bytes of hex. It seals every session cookie: regenerating it logs
+      # everyone out, and losing it means nobody can be logged in at all.
+      ALEXANDRIA_AUTH_CONFIG_SESSION_KEY: ${ALEXANDRIA_AUTH_CONFIG_SESSION_KEY:?set ALEXANDRIA_AUTH_CONFIG_SESSION_KEY in .env}
+
+      ALEXANDRIA_WALLET_CONFIG_API_HTTP_PROTOCOL: ${WALLET_PROTOCOL:-http}
+      ALEXANDRIA_WALLET_CONFIG_API_HTTP_URL: ${WALLET_HOST:?set WALLET_HOST in .env}
+      ALEXANDRIA_WALLET_CONFIG_API_HTTP_PORT: ${WALLET_PORT:-7002}
+
+      ALEXANDRIA_OBSERVABILITY_LOG_LEVEL: ${LOG_LEVEL:-info}
+      ALEXANDRIA_OBSERVABILITY_LOG_FORMAT: json
+    # No healthcheck: the image is distroless — no shell, no curl, no wget —
+    # and the binary is the only executable in it, so there is nothing compose
+    # could run inside the container to probe /readyz. Caddy retries the
+    # upstream, and the Kubernetes chart under k8s/ has real probes because
+    # there the kubelet does the probing from outside.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alexandria}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-alexandria}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ===== Identity ===========================================================
+  # Reached by the browser through Caddy on AUTH_DOMAIN, and by the node
+  # directly on this network. It publishes no port of its own.
+  zitadel-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${ZITADEL_DB_USER:-zitadel}
+      POSTGRES_PASSWORD: ${ZITADEL_DB_PASSWORD:?set ZITADEL_DB_PASSWORD in .env}
+      POSTGRES_DB: ${ZITADEL_DB_NAME:-zitadel}
+    volumes:
+      - zitadel-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Zitadel runs as uid 1000 out of a distroless image and has to write its
+  # bootstrap token to a volume, which Docker creates root-owned. Same one-shot
+  # fix as in the development file, and for the same reason.
+  zitadel-init:
+    image: alpine:3.22
+    command: ["chown", "-R", "1000:1000", "/machinekey"]
+    volumes:
+      - zitadel-machinekey:/machinekey
+
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:-v4.17.2}
+    restart: unless-stopped
+    command: "start-from-init --masterkeyFromEnv"
+    environment:
+      # Caddy terminates TLS in front; Zitadel speaks plain HTTP on this
+      # network and only needs to know that the URLs it mints are https.
+      ZITADEL_TLS_ENABLED: "false"
+      ZITADEL_EXTERNALSECURE: "true"
+      ZITADEL_EXTERNALDOMAIN: ${AUTH_DOMAIN}
+      ZITADEL_EXTERNALPORT: "443"
+      # Exactly 32 characters, and the single most important secret here: it
+      # encrypts everything Zitadel stores. There is no recovery from losing
+      # it — the database becomes unreadable.
+      ZITADEL_MASTERKEY: ${ZITADEL_MASTERKEY:?set ZITADEL_MASTERKEY in .env, exactly 32 characters}
+      ZITADEL_DATABASE_POSTGRES_HOST: zitadel-db
+      ZITADEL_DATABASE_POSTGRES_PORT: 5432
+      ZITADEL_DATABASE_POSTGRES_DATABASE: ${ZITADEL_DB_NAME:-zitadel}
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: ${ZITADEL_DB_USER:-zitadel}
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: ${ZITADEL_DB_PASSWORD}
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: ${ZITADEL_DB_USER:-zitadel}
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: ${ZITADEL_DB_PASSWORD}
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: "false"
+      # The first administrator. Change the password at the first login: this
+      # value stays in .env and in the shell history of whoever wrote it.
+      ZITADEL_FIRSTINSTANCE_ORG_NAME: ${ZITADEL_ORG:-alexandria}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: ${ZITADEL_ADMIN_USER:-admin}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${ZITADEL_ADMIN_PASSWORD:?set ZITADEL_ADMIN_PASSWORD in .env}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "true"
+      # The machine user the bootstrap script authenticates as, and the token
+      # it uses. Read once, at setup; nothing depends on it afterwards.
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: ${ZITADEL_SA_USER:-alexandria-bootstrap}
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: "Alexandria bootstrap"
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2100-01-01T00:00:00Z"
+      ZITADEL_FIRSTINSTANCE_PATPATH: /machinekey/pat.txt
+    volumes:
+      - zitadel-machinekey:/machinekey
+    ports:
+      # Bound to loopback, so it is reachable from a shell on this host and
+      # from nowhere else. scripts/zitadel-bootstrap.sh calls the management
+      # API here rather than through Caddy, which keeps provisioning
+      # independent of TLS having been issued yet.
+      - "127.0.0.1:${ZITADEL_HOST_PORT:-1600}:8080"
+    depends_on:
+      zitadel-db:
+        condition: service_healthy
+      zitadel-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  zitadel-data:
+  zitadel-machinekey:

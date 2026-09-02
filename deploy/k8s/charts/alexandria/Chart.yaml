@@ -1,0 +1,33 @@
+apiVersion: v2
+name: alexandria
+description: An Alexandria vocabulary hub node — the service, its database and its identity provider.
+type: application
+
+# The chart's own version. Bumped when the templates change, independently of
+# what they deploy.
+version: 0.1.0
+
+# What it deploys by default, overridden per release with image.tag. Quoted:
+# unquoted it is a float to YAML, and 1.10 becomes 1.1.
+appVersion: "0.1.0"
+
+home: https://github.com/caparicio-esd/alexandria
+sources:
+  - https://github.com/caparicio-esd/alexandria
+keywords: [dataspace, ssi, did, vocabulary]
+
+# Both are off by default, and both exist for the same reason: a first
+# deployment needs a database and an identity provider in the cluster to have
+# anything at all, and a real one almost always has them already — a managed
+# Postgres, a Zitadel shared across services. Turning either on with
+# `postgresql.enabled` or `zitadel.enabled` also requires `helm dependency
+# update`, which is why they are conditional rather than always pulled.
+dependencies:
+  - name: postgresql
+    version: "16.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: zitadel
+    version: "10.x.x"
+    repository: https://charts.zitadel.com
+    condition: zitadel.enabled

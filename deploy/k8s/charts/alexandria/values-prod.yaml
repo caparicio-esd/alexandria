@@ -1,0 +1,102 @@
+# The shape of a deployment, not a deployment. Copy it, fill in the addresses,
+# and keep the secrets out of it — see `existingSecret` at the bottom.
+#
+#   helm upgrade --install alexandria k8s/charts/alexandria \
+#     -f my-values.yaml --namespace alexandria --create-namespace
+#
+# What differs from the defaults is only what a deployment actually decides:
+# how many replicas, which database, which identity provider, where the
+# certificate comes from.
+
+image:
+  # Pin. `:latest` moving underneath a `helm upgrade` is a change to how every
+  # login behaves, and it is not what a rollback rolls back to.
+  tag: "0.1.0"
+
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Spread replicas across nodes, so a single node going away is a degraded
+# deployment rather than an outage.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: alexandria
+
+ingress:
+  className: nginx
+  host: alexandria.example.org
+  tls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod
+
+# A managed database, outside the cluster. The bundled subchart keeps its data
+# in a PVC with no backup of its own, which is not a deployment story.
+postgresql:
+  enabled: false
+
+database:
+  host: postgres.internal.example.org
+  port: 5432
+  user: alexandria
+  name: alexandria
+  # Not here. See existingSecret.
+
+# An identity provider that already exists and is shared, rather than one this
+# chart owns.
+zitadel:
+  enabled: false
+
+auth:
+  enabled: true
+  host: auth.example.org
+  # Empty means the node reaches the provider at the same address the browser
+  # does, which is right for a provider outside the cluster.
+  internalIssuer: ""
+  # Minted when the node is registered as an application; it cannot be chosen.
+  clientId: ""
+  # The project id, so a token minted for another relying party is refused
+  # rather than accepted.
+  audiences: []
+  requiredRoles: []
+
+wallet:
+  protocol: http
+  host: wallet.alexandria.svc.cluster.local
+  port: 7002
+
+observability:
+  logLevel: info
+  logFormat: json
+
+serviceMonitor:
+  enabled: true
+
+production: true
+
+vault:
+  enabled: true
+
+# Where the secrets come from. A Secret this chart does not render and never
+# sees — managed with sealed-secrets, external-secrets, or by hand — carrying:
+#
+#   ALEXANDRIA_COMMON_CONFIG_DB_PASSWORD
+#   ALEXANDRIA_AUTH_CONFIG_CLIENT_SECRET
+#   ALEXANDRIA_AUTH_CONFIG_SESSION_KEY
+#
+# The alternative is `--set auth.sessionKey=...` on every upgrade, which puts
+# them in shell history and in the release's stored manifest.
+existingSecret: alexandria-secrets

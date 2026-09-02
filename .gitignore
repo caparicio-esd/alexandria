@@ -20,6 +20,10 @@ coverage.html
 # repository the ability to impersonate any site on every machine that trusts it.
 /.certs/
 
+# Helm subcharts, fetched by `helm dependency update`. Chart.lock is committed —
+# it pins what was fetched — but the archives themselves are downloads.
+/k8s/charts/*/charts/
+
 # Secrets and local configuration
 .env
 .env.*

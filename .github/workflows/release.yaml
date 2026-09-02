@@ -1,0 +1,87 @@
+# Publishes the node's container image to Quay, once per tag.
+#
+# Nothing here re-runs the checks in ci.yaml: a tag names a commit that already
+# went through them on main, and repeating them only delays the artefact. What
+# this workflow owns is the build that the deployment files consume — the same
+# Dockerfile, two architectures, tags derived from the git tag.
+#
+# What the repository has to carry for it to work:
+#
+#   secrets.QUAY_USERNAME   robot account, e.g. myorg+alexandria_ci
+#   secrets.QUAY_TOKEN      that robot's token
+#   vars.QUAY_IMAGE         optional; defaults to quay.io/<owner>/alexandria
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # So a failed publish can be retried, or an existing tag re-pushed, without
+  # deleting and recreating the tag.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag to build (defaults to the current branch)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# One publish at a time. Two runs pushing the same tags to the same repository
+# race over which manifest ends up under :latest.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # linux/arm64 needs no emulation to compile — the Dockerfile cross-builds
+      # — but the distroless base is still pulled per architecture and buildx
+      # wants the platform registered before it will assemble the manifest.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      # v1.4.2 becomes :1.4.2, :1.4, :1 and :latest — so a deployment can pin
+      # as tightly or as loosely as it wants — while a prerelease tag like
+      # v1.5.0-rc.1 gets only its own exact tag and never moves :latest.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ vars.QUAY_IMAGE || format('quay.io/{0}/alexandria', github.repository_owner) }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && !contains(github.ref, '-') }}
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.title=alexandria
+            org.opencontainers.image.description=Alexandria vocabulary hub node
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+          # Registry-side cache. The runner's own layer cache is thrown away
+          # between runs, and tags are rare enough that a cold build would
+          # otherwise be the normal case.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

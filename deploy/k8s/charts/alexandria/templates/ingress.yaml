@@ -1,0 +1,45 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "alexandria.fullname" . }}
+  labels:
+    {{- include "alexandria.labels" . | nindent 4 }}
+  {{- if or .Values.ingress.annotations (and .Values.ingress.tls.enabled .Values.ingress.tls.clusterIssuer) }}
+  annotations:
+    {{- if and .Values.ingress.tls.enabled .Values.ingress.tls.clusterIssuer }}
+    # cert-manager watches for this and issues into the Secret named below.
+    # Without an issuer the chart assumes the certificate is provided some other
+    # way — a wildcard already in the namespace, or TLS terminated before the
+    # cluster — and only references it.
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ default (printf "%s-tls" (include "alexandria.fullname" .)) .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.host is required" .Values.ingress.host | quote }}
+      http:
+        paths:
+          # The whole node behind one rule. Its internal listener — /metrics and
+          # /debug/pprof on the metrics port — is deliberately not routed: it is
+          # reachable inside the cluster through the Service and nowhere else.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "alexandria.fullname" . }}
+                port:
+                  name: http
+{{- end }}
