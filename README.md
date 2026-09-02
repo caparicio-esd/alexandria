@@ -1,4 +1,6 @@
-# alexandria
+# Alexandria Vocabulary Hub
+
+![banner alexandria](./docs/static/banner.png)
 
 A vocabulary hub for a dataspace.
 
@@ -127,15 +129,15 @@ $ curl -s localhost:1200/readyz | jq -c '.checks.database'
 
 ## Endpoints
 
-| Path | Port | Purpose |
-| --- | --- | --- |
-| `/healthz` | api | Liveness. Checks nothing external: a failure means restart me. |
-| `/readyz` | api | Readiness. Runs the dependency checks and names the failing one. |
-| `/api/v1/auth/*` | api | The authentication proxy. See below. |
-| `/ssi-auth/wallet/*` | api | The wallet API. |
-| `/.well-known/did.json` | api | The DID Document, as did:web resolution expects it. |
-| `/metrics` | internal | Prometheus scrape endpoint. |
-| `/debug/pprof/*` | internal | Profiling. Off by default. |
+| Path                    | Port     | Purpose                                                          |
+| ----------------------- | -------- | ---------------------------------------------------------------- |
+| `/healthz`              | api      | Liveness. Checks nothing external: a failure means restart me.   |
+| `/readyz`               | api      | Readiness. Runs the dependency checks and names the failing one. |
+| `/api/v1/auth/*`        | api      | The authentication proxy. See below.                             |
+| `/ssi-auth/wallet/*`    | api      | The wallet API.                                                  |
+| `/.well-known/did.json` | api      | The DID Document, as did:web resolution expects it.              |
+| `/metrics`              | internal | Prometheus scrape endpoint.                                      |
+| `/debug/pprof/*`        | internal | Profiling. Off by default.                                       |
 
 The internal port is separate on purpose: publishing the API must not publish
 the diagnostics, and a heap profile names everything the process has in memory.
@@ -170,15 +172,15 @@ installed on the versioned group itself rather than route by route. The only
 exceptions are the routes that exist to obtain a credential, and the probes,
 which sit outside the prefix entirely.
 
-| Route | Purpose |
-| --- | --- |
-| `GET /api/v1/auth/login` | Starts the authorization code flow. Redirects, or answers `{"authorization_url": …}` with `?response=json`. |
-| `GET /api/v1/auth/callback` | Completes it, seals the session cookie, redirects to `return_to` or `app_url`. |
-| `POST /api/v1/auth/refresh` | Renews the session from its refresh token. |
-| `POST /api/v1/auth/logout` | Clears the cookie and revokes the refresh token at the provider. |
-| `POST /api/v1/auth/token` | Proxies the client credentials grant, for a service account or a peer node. |
-| `GET /api/v1/auth/session` | Who the caller is, with no token in the answer. |
-| `GET /api/v1/auth/userinfo` | The provider's own view of the caller. |
+| Route                       | Purpose                                                                                                     |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/auth/login`    | Starts the authorization code flow. Redirects, or answers `{"authorization_url": …}` with `?response=json`. |
+| `GET /api/v1/auth/callback` | Completes it, seals the session cookie, redirects to `return_to` or `app_url`.                              |
+| `POST /api/v1/auth/refresh` | Renews the session from its refresh token.                                                                  |
+| `POST /api/v1/auth/logout`  | Clears the cookie and revokes the refresh token at the provider.                                            |
+| `POST /api/v1/auth/token`   | Proxies the client credentials grant, for a service account or a peer node.                                 |
+| `GET /api/v1/auth/session`  | Who the caller is, with no token in the answer.                                                             |
+| `GET /api/v1/auth/userinfo` | The provider's own view of the caller.                                                                      |
 
 ### The flow
 
@@ -263,21 +265,21 @@ a client that cannot tell the two apart will loop trying.
 
 ### Settings
 
-| Key | What it does |
-| --- | --- |
-| `enabled` | The whole context. Off, nothing is protected and no provider is contacted. |
-| `issuer` | The issuer every token must name. Checked against the discovery document, so a mismatch is refused rather than trusted. |
-| `internal_issuer` | Where *this process* reaches the provider, when that is not where the browser does — a container name against a published host. |
-| `client_id` / `client_secret` | This node's registered application. The secret never leaves the process. |
-| `audiences` | The `aud` an access token must carry — the Zitadel project id. Empty accepts any, which is only safe as the sole relying party. |
-| `scopes` | Requested at the authorization endpoint. `offline_access` is what earns a refresh token. |
-| `redirect_url` | This node's callback, exactly as registered in Zitadel. |
-| `app_url` / `post_logout_url` | Where the browser lands after a login, and after a logout. |
-| `introspect` | `never` \| `fallback` \| `always`. See above. |
-| `roles_claim` / `required_roles` | Where roles live, and which ones gate the whole API. |
-| `jwks_refresh` / `http_timeout` | How often signing keys are re-read, and the bound on every provider call. |
-| `startup_discovery_timeout` | How long startup blocks on the provider before continuing in the background. |
-| `session.*` | The cookie: `name`, `domain`, `path`, `secure`, `same_site`, `ttl`, and the 32-byte `key` that seals it. |
+| Key                              | What it does                                                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                        | The whole context. Off, nothing is protected and no provider is contacted.                                                      |
+| `issuer`                         | The issuer every token must name. Checked against the discovery document, so a mismatch is refused rather than trusted.         |
+| `internal_issuer`                | Where _this process_ reaches the provider, when that is not where the browser does — a container name against a published host. |
+| `client_id` / `client_secret`    | This node's registered application. The secret never leaves the process.                                                        |
+| `audiences`                      | The `aud` an access token must carry — the Zitadel project id. Empty accepts any, which is only safe as the sole relying party. |
+| `scopes`                         | Requested at the authorization endpoint. `offline_access` is what earns a refresh token.                                        |
+| `redirect_url`                   | This node's callback, exactly as registered in Zitadel.                                                                         |
+| `app_url` / `post_logout_url`    | Where the browser lands after a login, and after a logout.                                                                      |
+| `introspect`                     | `never` \| `fallback` \| `always`. See above.                                                                                   |
+| `roles_claim` / `required_roles` | Where roles live, and which ones gate the whole API.                                                                            |
+| `jwks_refresh` / `http_timeout`  | How often signing keys are re-read, and the bound on every provider call.                                                       |
+| `startup_discovery_timeout`      | How long startup blocks on the provider before continuing in the background.                                                    |
+| `session.*`                      | The cookie: `name`, `domain`, `path`, `secure`, `same_site`, `ttl`, and the 32-byte `key` that seals it.                        |
 
 The rules tighten in production — `common_config.connection.is_prod` — where a
 missing `session.key`, a cookie without `secure`, or a client with no secret are
@@ -385,7 +387,7 @@ curl -s -H "Authorization: Bearer $token" localhost:1234/api/v1/auth/session
 ```
 
 ```json
-{"subject":"388876343518953475","machine":true,"roles":[],"scopes":[]}
+{ "subject": "388876343518953475", "machine": true, "roles": [], "scopes": [] }
 ```
 
 `machine: true` is the node reporting a token with no human behind it. The empty
@@ -420,20 +422,20 @@ at creation — and keeps the session key, so open sessions survive.
 
 ### When it goes wrong
 
-| Symptom | Cause |
-| --- | --- |
-| `Errors.App.NotFound` at Zitadel | The `client_id` does not exist there. Usually a `.env` from an instance that was since reset — re-run `task auth:bootstrap` and restart the node. |
-| The node refuses to start, naming `auth_config.client_id` | No `.env`. Run `task auth:bootstrap`. |
-| `No personal access token found` | The instance predates the machine user. `task auth:reset`, or pass `ZITADEL_PAT=…`. |
-| Every route answers 503 | The node has not reached Zitadel. It keeps retrying; check `task auth:logs`. |
-| A running `task dev` still fails after a reset | It holds the old `.env` in its environment. Restart it. |
+| Symptom                                                   | Cause                                                                                                                                             |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Errors.App.NotFound` at Zitadel                          | The `client_id` does not exist there. Usually a `.env` from an instance that was since reset — re-run `task auth:bootstrap` and restart the node. |
+| The node refuses to start, naming `auth_config.client_id` | No `.env`. Run `task auth:bootstrap`.                                                                                                             |
+| `No personal access token found`                          | The instance predates the machine user. `task auth:reset`, or pass `ZITADEL_PAT=…`.                                                               |
+| Every route answers 503                                   | The node has not reached Zitadel. It keeps retrying; check `task auth:logs`.                                                                      |
+| A running `task dev` still fails after a reset            | It holds the old `.env` in its environment. Restart it.                                                                                           |
 
 ### Doing it by hand
 
 Without the script: in the console, create a project, then a **Web** application
 with authentication method **CODE**, redirect URI
 `http://127.0.0.1:1234/api/v1/auth/callback`, **Development Mode** on so a
-plain-http URI is accepted, and *user roles inside ID token* under its token
+plain-http URI is accepted, and _user roles inside ID token_ under its token
 settings. Copy the generated client id and secret into `.env`. For the machine
 flow, add a service user and generate a client secret for it.
 
@@ -497,9 +499,16 @@ carries the module and component that emitted it, mirroring the package layout,
 plus the request id where there is one:
 
 ```json
-{"level":"WARN","msg":"request","module":"ssi-auth","component":"rest",
- "status":412,"route":"/ssi-auth/wallet/did","err":"wallet is not linked",
- "request_id":"peer-42"}
+{
+  "level": "WARN",
+  "msg": "request",
+  "module": "ssi-auth",
+  "component": "rest",
+  "status": 412,
+  "route": "/ssi-auth/wallet/did",
+  "err": "wallet is not linked",
+  "request_id": "peer-42"
+}
 ```
 
 The access log's severity follows the status class — 5xx is an error, 4xx a
@@ -513,7 +522,7 @@ readiness 503 during startup trains everyone to ignore errors.
 pipeline, so traces will hang off the same resource. Alongside the Go runtime
 metrics:
 
-- `http_server_request_duration_seconds` — labelled by route *template*, never
+- `http_server_request_duration_seconds` — labelled by route _template_, never
   the filled-in path, so identifiers stay out of the index and no caller can
   mint unbounded series.
 - `http_server_active_requests`
