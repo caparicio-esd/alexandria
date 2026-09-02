@@ -15,6 +15,11 @@ coverage.html
 # Logs
 *.log
 
+# The project's local certificate authority: a signing key, and a root that a
+# machine has been told to trust. Committing it would hand anyone who clones the
+# repository the ability to impersonate any site on every machine that trusts it.
+/.certs/
+
 # Secrets and local configuration
 .env
 .env.*

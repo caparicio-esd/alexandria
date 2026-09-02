@@ -6,6 +6,10 @@ version: "3"
 # up, rather than each command carrying its own -tags.
 env:
   GOFLAGS: -tags=jwx_es256k
+  # The compose file is named for the environment it describes, so every
+  # `docker compose` below — and any run by hand in a shell that exports this —
+  # finds it without a -f on each command.
+  COMPOSE_FILE: docker-compose.dev.yaml
 
 # Written by `task auth:bootstrap`, and absent until it runs: it carries the
 # client secret and the session key, which is why it is generated rather than
@@ -14,6 +18,13 @@ dotenv: [".env"]
 
 vars:
   BIN: alexandria
+  # Read from the configuration rather than repeated here: the port the process
+  # actually listens on is `internal_port`, since what the outside world sees is
+  # the proxy's.
+  NODE_PORT:
+    sh: sed -n 's/^[[:space:]]*internal_port:[[:space:]]*"\(.*\)".*/\1/p' config/config.yaml | head -n 1
+  ISSUER:
+    sh: sed -n 's/^[[:space:]]*issuer:[[:space:]]*"\(.*\)".*/\1/p' config/config.yaml | head -n 1
   MAIN: ./cmd/alexandria
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
@@ -52,6 +63,37 @@ tasks:
     desc: Hot reload with air.
     cmds: ["go tool air"]
 
+  dev:auto:
+    desc: "One command to start working: clear what is stale, bring everything up, run the node."
+    deps: [tls:ca]
+    cmds:
+      # A node left running from yesterday holds the port this one wants, and
+      # the error that produces names neither the process nor the port.
+      - |
+        stale="$(lsof -ti tcp:{{.NODE_PORT}} 2>/dev/null || true)"
+        if [ -n "$stale" ]; then
+          echo "stale      node on {{.NODE_PORT}}, stopping it"
+          echo "$stale" | xargs kill
+        fi
+      # Everything the node talks to. Idempotent: already-running services are
+      # left alone, and --wait blocks until they are actually answering rather
+      # than merely started.
+      - docker compose up -d --wait postgres caddy zitadel
+      # Idempotent too: it finds the project and application if they are there,
+      # and re-registers the redirect URI in case the configuration moved.
+      - bash scripts/zitadel-bootstrap.sh
+      # The one thing no task can do for you, because it needs an administrator.
+      - |
+        if ! curl -sf {{.ISSUER}}/.well-known/openid-configuration >/dev/null 2>&1; then
+          echo
+          echo "  This machine does not trust the project authority yet, so the"
+          echo "  node will not reach {{.ISSUER}}:"
+          echo
+          echo "      task tls:trust"
+          echo
+        fi
+      - task: dev
+
   db:up:
     desc: Start the local Postgres and wait for it to accept connections.
     cmds: ["docker compose up -d --wait postgres"]
@@ -75,12 +117,47 @@ tasks:
     desc: Follow the local Postgres logs.
     cmds: ["docker compose logs -f postgres"]
 
+  tls:ca:
+    desc: Create the project's certificate authority in .certs/, if it has none.
+    cmds: ["bash scripts/tls-ca.sh"]
+
+  tls:trust:
+    desc: Trust that authority on this machine. Needs sudo, once.
+    deps: [tls:ca]
+    cmds:
+      - |
+        case "$(uname -s)" in
+          Darwin)
+            sudo security add-trusted-cert -d -r trustRoot \
+              -k /Library/Keychains/System.keychain .certs/root.crt
+            ;;
+          Linux)
+            sudo cp .certs/root.crt /usr/local/share/ca-certificates/alexandria-local.crt
+            sudo update-ca-certificates
+            ;;
+          *)
+            echo "Trust .certs/root.crt by hand on this system." >&2
+            exit 1
+            ;;
+        esac
+
+  tls:up:
+    desc: Start the local TLS terminator.
+    deps: [tls:ca]
+    cmds: ["docker compose up -d --wait caddy"]
+
+  tls:logs:
+    desc: Follow the Caddy logs.
+    cmds: ["docker compose logs -f caddy"]
+
   auth:up:
     desc: Start the local Zitadel and wait for it to answer.
     cmds: ["docker compose up -d --wait zitadel"]
 
   auth:bootstrap:
     desc: Create the Zitadel project and application, and write .env.
+    # Not tls:up. TLS is infrastructure of its own: it fronts the node whether
+    # or not authentication is enabled, and this talks to Zitadel directly.
     deps: [auth:up]
     cmds: ["bash scripts/zitadel-bootstrap.sh"]
 

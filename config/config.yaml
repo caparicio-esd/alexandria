@@ -20,10 +20,12 @@
 common_config:
   hosts:
     http:
-      protocol: "http"
-      url: "127.0.0.1"
-      port: "1234"
-      internal_port: null
+      # As the outside world sees this node: through Caddy, over TLS. The
+      # process itself listens on internal_port, in the clear, behind it.
+      protocol: "https"
+      url: "alexandria.127.0.0.1.nip.io"
+      port: "8443"
+      internal_port: "1234"
     grpc: null
     graphql: null
   db:
@@ -45,7 +47,7 @@ common_config:
     is_local: true
     is_prod: false
     is_vault_real: false
-    has_tls_proxy: false
+    has_tls_proxy: true
 
 wallet_config:
   wallet: Fafnir
@@ -72,7 +74,7 @@ auth_config:
   enabled: true
   # The issuer every token names. It must be exactly what Zitadel's discovery
   # document reports, or the handshake is refused rather than trusted.
-  issuer: "http://127.0.0.1:1600"
+  issuer: "https://auth.127.0.0.1.nip.io:8443"
   # Where this process reaches Zitadel, when that differs from the address the
   # browser uses — "http://zitadel:8080" from inside the compose network. Empty
   # means they are the same, which is the case for a loopback run.
@@ -89,9 +91,9 @@ auth_config:
   # the value to put here is the project id.
   audiences: []
   scopes: ["openid", "profile", "email", "offline_access"]
-  redirect_url: "http://127.0.0.1:1234/api/v1/auth/callback"
+  redirect_url: "https://alexandria.127.0.0.1.nip.io:8443/api/v1/auth/callback"
   # Where the browser lands once a login completes, and after a logout.
-  app_url: "http://127.0.0.1:1234/"
+  app_url: "https://alexandria.127.0.0.1.nip.io:8443/"
   post_logout_url: ""
   # never | fallback | always. Zitadel issues opaque access tokens unless the
   # application asks for JWTs; fallback verifies a JWT locally and introspects
@@ -111,9 +113,9 @@ auth_config:
     name: "alexandria_session"
     domain: ""
     path: "/"
-    # Plain HTTP on a workstation, so the cookie cannot be marked https-only.
-    # A deployment sets both of these the other way round.
-    secure: false
+    # TLS is terminated by Caddy in front, so the cookie never travels in the
+    # clear and can say so.
+    secure: true
     same_site: "lax"
     ttl: "12h"
     # 32 bytes of hex or base64, written to .env by `task auth:bootstrap`.

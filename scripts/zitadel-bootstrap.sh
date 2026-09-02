@@ -13,7 +13,6 @@
 
 set -euo pipefail
 
-ISSUER="${ZITADEL_ISSUER:-http://127.0.0.1:${ZITADEL_PORT:-1600}}"
 CONFIG="${ALEXANDRIA_CONFIG:-config/config.yaml}"
 PROJECT_NAME="${ZITADEL_PROJECT:-alexandria}"
 APP_NAME="${ZITADEL_APP:-alexandria-node}"
@@ -29,8 +28,28 @@ setting() {
   sed -n "s/^[[:space:]]*$1:[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" "$CONFIG" | head -n 1
 }
 
+# The issuer comes from the node's own configuration too, but it is not where
+# this script calls: it talks to Zitadel directly, on the port compose publishes,
+# and sends the issuer's host in a Host header.
+#
+# That matters twice. Zitadel resolves which instance a request belongs to from
+# that header, so it has to be right — calling it on an address the instance does
+# not answer for returns a bare 404 with nothing to explain it. And going direct
+# means provisioning does not depend on the TLS terminator being up, or on this
+# machine having been told to trust the local certificate authority yet.
+ISSUER="${ZITADEL_ISSUER:-$(setting issuer)}"
+API="${ZITADEL_API:-http://127.0.0.1:${ZITADEL_HOST_PORT:-1600}}"
 REDIRECT_URI="${REDIRECT_URI:-$(setting redirect_url)}"
 APP_URL="${APP_URL:-$(setting app_url)}"
+
+if [[ -z "$ISSUER" ]]; then
+  echo "no auth_config.issuer in $CONFIG, and no ZITADEL_ISSUER given" >&2
+  exit 1
+fi
+
+# Host and port of the issuer, which is what the instance answers for.
+ISSUER_HOST="${ISSUER#*://}"
+ISSUER_HOST="${ISSUER_HOST%%/*}"
 
 if [[ -z "$REDIRECT_URI" ]]; then
   echo "no auth_config.redirect_url in $CONFIG, and no REDIRECT_URI given" >&2
@@ -76,22 +95,35 @@ fi
 api() {
   local method="$1" path="$2" body="${3:-}"
   local args=(-sS -X "$method" -H "Authorization: Bearer $PAT"
+              -H "Host: $ISSUER_HOST"
               -H "Content-Type: application/json" -H "Accept: application/json")
 
   [[ -n "$body" ]] && args+=(-d "$body")
 
-  curl "${args[@]}" "$ISSUER$path"
+  curl "${args[@]}" "$API$path"
 }
 
 # fail_on_error stops on an API error rather than carrying a null id forward,
 # where the failure would resurface three calls later as something unrelated.
 fail_on_error() {
-  local response="$1" what="$2"
+  local response="$1" what="$2" tolerated="${3:-}"
 
-  if [[ "$(jq -r 'if type == "object" and has("code") then "error" else "ok" end' <<<"$response")" == "error" ]]; then
-    echo "$what: $(jq -r '.message // "unknown error"' <<<"$response")" >&2
-    exit 1
+  if [[ "$(jq -r 'if type == "object" and has("code") then "error" else "ok" end' <<<"$response")" != "error" ]]; then
+    return 0
   fi
+
+  local message
+  message="$(jq -r '.message // "unknown error"' <<<"$response")"
+
+  # Zitadel answers a write that changes nothing with an error rather than with
+  # a no-op. For anything this script re-applies on every run, that is the
+  # expected outcome the second time, not a failure.
+  if [[ -n "$tolerated" && "$message" == *"$tolerated"* ]]; then
+    return 0
+  fi
+
+  echo "$what: $message" >&2
+  exit 1
 }
 
 # ===== Project ===============================================================
@@ -159,6 +191,29 @@ if [[ -z "$APP_ID" ]]; then
 else
   CLIENT_ID="$(api GET "/management/v1/projects/$PROJECT_ID/apps/$APP_ID" | jq -r '.app.oidcConfig.clientId')"
   echo "app        $APP_NAME ($APP_ID) already there"
+
+  # The registered redirect URI has to match what the node sends, to the
+  # character. It changes whenever the node moves — a port, or plain http to
+  # https — and an application left pointing at the old one fails at the
+  # callback, after the user has already typed their password.
+  response="$(api PUT "/management/v1/projects/$PROJECT_ID/apps/$APP_ID/oidc_config" "$(
+    jq -n --arg redirect "$REDIRECT_URI" --arg logout "$APP_URL" '{
+      redirectUris: [$redirect],
+      postLogoutRedirectUris: [$logout],
+      responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+      grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"],
+      appType: "OIDC_APP_TYPE_WEB",
+      authMethodType: "OIDC_AUTH_METHOD_TYPE_BASIC",
+      version: "OIDC_VERSION_1_0",
+      devMode: true,
+      accessTokenType: "OIDC_TOKEN_TYPE_JWT",
+      accessTokenRoleAssertion: true,
+      idTokenRoleAssertion: true,
+      idTokenUserinfoAssertion: true
+    }'
+  )")"
+  fail_on_error "$response" "updating the application" "No changes"
+  echo "redirect   $REDIRECT_URI"
 fi
 
 # The secret is shown once, at creation. A re-run against an application that
