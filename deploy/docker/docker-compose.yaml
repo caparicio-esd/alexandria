@@ -178,10 +178,15 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./fafnir/wallet.yaml:/app/static/fafnir/config.yaml:ro
-      - fafnir-secrets:/app/vault/secrets:ro
+      # Writable, and a volume rather than the container layer: this is where
+      # the wallet keeps the node's private keys, one file per key id. Postgres
+      # holds only their metadata. On the container layer the node's identity
+      # would not survive an image bump.
+      - fafnir-secrets:/app/vault/secrets
     environment:
-      # The directory the wallet's file-backed vault reads, and the file in it
-      # holding the database credentials. It refuses to start without both.
+      # The directory the wallet's file-backed vault reads and writes, and the
+      # file in it holding the database credentials. It refuses to start
+      # without both.
       VAULT_PATH: /app/vault/secrets
       VAULT_APP_DB: db.json
     command: ["setup", "--env-file", "/app/static/fafnir/config.yaml"]
@@ -194,7 +199,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./fafnir/wallet.yaml:/app/static/fafnir/config.yaml:ro
-      - fafnir-secrets:/app/vault/secrets:ro
+      - fafnir-secrets:/app/vault/secrets
     environment:
       VAULT_PATH: /app/vault/secrets
       VAULT_APP_DB: db.json

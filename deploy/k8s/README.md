@@ -154,13 +154,28 @@ It does **not** deploy a database. Point `wallet.deploy.database.host` at one
 that exists; [values-dev.yaml](charts/alexandria/values-dev.yaml) creates a
 logical database for it inside the bundled Postgres with an initdb script.
 
-Two things make the bundled wallet a test-cluster story rather than a deployment
-one, and [values-prod.yaml](charts/alexandria/values-prod.yaml) leaves it off
-for both:
+### The claim is the identity
 
-- its key material lives in a PVC with no backup of its own, and losing it loses
-  the node's identity rather than merely its data;
-- its credential is a Secret this chart renders, not a Vault.
+While `is_vault_real` is false the wallet keeps private keys as **files**, one
+per key id, under `VAULT_PATH`. Its Postgres holds only their metadata and the
+DID records. So `wallet.deploy.persistence` — not the database — is what the
+node's identity actually is, and the chart gives that claim a
+`helm.sh/resource-policy: keep` so `helm uninstall` leaves it behind.
+
+Losing the claim while keeping the database is the worse of the two failures:
+the wallet goes on answering `/dids/default` with a DID it can no longer sign
+with, so the node reports itself ready and every signature fails.
+
+The Deployment is one replica with a `Recreate` strategy, because the claim is
+ReadWriteOnce.
+
+### Why production leaves it off
+
+Two things make the bundled wallet a test-cluster story, and
+[values-prod.yaml](charts/alexandria/values-prod.yaml) leaves it off for both:
+
+- that claim has no backup of its own, and what it holds is not reissuable;
+- the wallet's database credential is a Secret this chart renders, not a Vault.
 
 ## Probes
 

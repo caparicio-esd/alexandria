@@ -61,6 +61,31 @@ stringData:
     }
 {{- end }}
 ---
+{{- if not .Values.wallet.deploy.persistence.existingClaim }}
+# The node's private keys. The wallet keeps them as files, one per key id —
+# Postgres holds only their metadata — so this claim, and not the wallet's
+# database, is the thing whose loss costs the node its identity. On an
+# emptyDir the identity would not survive a rescheduled pod.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-keys
+  labels:
+    {{- include "alexandria.walletLabels" . | nindent 4 }}
+  annotations:
+    # Kept when the release is uninstalled. A `helm uninstall` that takes the
+    # node's private key with it is not a mistake anyone gets to make twice.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.wallet.deploy.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.wallet.deploy.persistence.size }}
+{{- end }}
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -87,6 +112,11 @@ spec:
   # One. The wallet owns key material in a database it migrates on start, and
   # nothing here has established that a second replica is safe.
   replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate: the keys are on a ReadWriteOnce claim, and a
+    # rolling update would start the new pod before the old one released it —
+    # which on most storage classes is a deadlock, not a slow rollout.
+    type: Recreate
   selector:
     matchLabels:
       {{- include "alexandria.walletSelectorLabels" . | nindent 6 }}
@@ -150,7 +180,10 @@ spec:
         - name: config
           configMap:
             name: {{ $name }}-config
-        - name: secrets
+        - name: keys
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-keys" $name) .Values.wallet.deploy.persistence.existingClaim }}
+        - name: credential
           secret:
             secretName: {{ default (printf "%s-secrets" $name) .Values.wallet.deploy.existingSecret }}
 {{- end }}

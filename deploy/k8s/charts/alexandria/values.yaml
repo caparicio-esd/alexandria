@@ -228,6 +228,14 @@ wallet:
     existingSecret: ""
     extraEnv: {}
 
+    # Where the private keys live. Not optional and not an emptyDir: the wallet
+    # keeps them as files, so this claim is what the node's identity actually
+    # is. It carries a keep resource-policy, so `helm uninstall` leaves it.
+    persistence:
+      size: 1Gi
+      storageClass: ""
+      existingClaim: ""
+
     resources:
       requests:
         cpu: 50m

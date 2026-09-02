@@ -90,12 +90,20 @@ services:
         condition: service_healthy
     volumes:
       - ./config/fafnir/wallet.yaml:/app/static/fafnir/config.yaml:ro
+      # The private keys. With is_vault_real false the wallet keeps them as
+      # files here, one per key id — not in Postgres, which holds only their
+      # metadata. So this is a volume and not the container's own layer: on the
+      # container layer the node's identity would not survive a
+      # `docker compose up --force-recreate` or an image bump.
+      - fafnir-keys:/app/vault/secrets
+      # The database credential, mounted read-only on top of that volume. Last
+      # mount by path depth wins, so the file is this one and the directory
+      # around it stays writable.
       - ./config/fafnir/db.json:/app/vault/secrets/db.json:ro
     environment:
       RUST_BACKTRACE: 1
-      # With is_vault_real false the wallet reads its secrets off disk, and
-      # these two are how it finds them: the directory, and the file inside it
-      # holding the database credentials. It refuses to start without both.
+      # Where that directory is, and which file in it holds the database
+      # credential. The wallet refuses to start without both.
       VAULT_PATH: /app/vault/secrets
       VAULT_APP_DB: db.json
     env_file:
@@ -114,6 +122,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./config/fafnir/wallet.yaml:/app/static/fafnir/config.yaml:ro
+      - fafnir-keys:/app/vault/secrets
       - ./config/fafnir/db.json:/app/vault/secrets/db.json:ro
     environment:
       RUST_BACKTRACE: 1
@@ -265,3 +274,4 @@ volumes:
   zitadel-data:
   zitadel-machinekey:
   fafnir-data:
+  fafnir-keys:

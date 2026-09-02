@@ -138,8 +138,17 @@ and a copy of this in two places is a copy that will diverge.
 - name: config
   mountPath: /app/static/fafnir
   readOnly: true
-- name: secrets
+# Writable: this is where the wallet writes the node's private keys, and a
+# read-only mount here fails at key registration with a message about an
+# unwritable path.
+- name: keys
   mountPath: /app/vault/secrets
+# The database credential, laid over that directory as a single file. A subPath
+# mount, because the Secret and the claim cannot both own the directory — and
+# the file has to be inside it, since VAULT_PATH names one directory for both.
+- name: credential
+  mountPath: /app/vault/secrets/db.json
+  subPath: db.json
   readOnly: true
 {{- end }}
 

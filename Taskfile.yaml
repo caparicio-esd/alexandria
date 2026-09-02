@@ -78,10 +78,14 @@ tasks:
       # Everything the node talks to. Idempotent: already-running services are
       # left alone, and --wait blocks until they are actually answering rather
       # than merely started.
-      - docker compose up -d --wait postgres caddy zitadel
+      - docker compose up -d --wait postgres caddy zitadel fafnir-wallet
       # Idempotent too: it finds the project and application if they are there,
       # and re-registers the redirect URI in case the configuration moved.
       - bash scripts/zitadel-bootstrap.sh
+      # Likewise: it gives the wallet a key and a DID only if it has none. The
+      # node's first call is GET /dids/default, and a wallet that has just been
+      # created answers 404 to it.
+      - bash scripts/fafnir-bootstrap.sh
       # The one thing no task can do for you, because it needs an administrator.
       - |
         if ! curl -sf {{.ISSUER}}/.well-known/openid-configuration >/dev/null 2>&1; then
@@ -116,6 +120,33 @@ tasks:
   db:logs:
     desc: Follow the local Postgres logs.
     cmds: ["docker compose logs -f postgres"]
+
+  wallet:up:
+    desc: Start the local wallet and wait for it to answer.
+    cmds: ["docker compose up -d --wait fafnir-wallet"]
+
+  wallet:bootstrap:
+    desc: Give the wallet a signing key and a default DID, if it has none.
+    deps: [wallet:up]
+    cmds: ["bash scripts/fafnir-bootstrap.sh"]
+
+  wallet:down:
+    desc: Stop the local wallet, keeping its keys and its data.
+    cmds: ["docker compose stop fafnir-wallet fafnir-db"]
+
+  wallet:reset:
+    desc: Destroy the local wallet, its keys and its data, then start over.
+    prompt: This deletes the node's private key. Its DID cannot be recovered. Continue?
+    cmds:
+      - docker compose rm -sfv fafnir-wallet fafnir-db fafnir-setup
+      # Compose prefixes a volume with the project, which is the directory name
+      # unless COMPOSE_PROJECT_NAME says otherwise.
+      - docker volume rm -f ${COMPOSE_PROJECT_NAME:-alexandria}_fafnir-data ${COMPOSE_PROJECT_NAME:-alexandria}_fafnir-keys
+      - task: wallet:bootstrap
+
+  wallet:logs:
+    desc: Follow the local wallet logs.
+    cmds: ["docker compose logs -f fafnir-wallet"]
 
   tls:ca:
     desc: Create the project's certificate authority in .certs/, if it has none.

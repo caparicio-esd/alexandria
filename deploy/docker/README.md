@@ -74,9 +74,14 @@ moving it. It owns every account in the deployment.
 
 ## What must be backed up
 
-- The `fafnir-data` volume, before anything else — it holds the node's private
-  key. Losing it does not lose data; it loses the node's identity, and every
-  credential ever issued to that identity with it.
+- The `fafnir-secrets` volume, before anything else — it holds the node's
+  private keys, one file per key. Losing it does not lose data; it loses the
+  node's identity, and every credential ever issued to that identity with it.
+  Note that this is the volume to keep, not `fafnir-data`: the wallet's Postgres
+  holds only key *metadata* and the DID records. Losing the keys while keeping
+  that database is the worst of the two outcomes — the wallet goes on reporting
+  a default DID it can no longer sign with.
+- The `fafnir-data` volume — the wallet's DID records.
 - The `postgres-data` volume — the node's own data.
 - The `zitadel-data` volume — every user, project and application.
 - `.env`, and `ZITADEL_MASTERKEY` above all. It encrypts everything Zitadel
