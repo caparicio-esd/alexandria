@@ -2,6 +2,30 @@
 
 ![banner alexandria](./docs/static/banner.png)
 
+<!-- State of the code: what CI says, what version is out, how to get it. -->
+
+[![ci](https://github.com/caparicio-esd/alexandria/actions/workflows/ci.yaml/badge.svg)](https://github.com/caparicio-esd/alexandria/actions/workflows/ci.yaml)
+[![release](https://github.com/caparicio-esd/alexandria/actions/workflows/release.yaml/badge.svg)](https://github.com/caparicio-esd/alexandria/actions/workflows/release.yaml)
+[![go report card](https://goreportcard.com/badge/github.com/caparicio-esd/alexandria)](https://goreportcard.com/report/github.com/caparicio-esd/alexandria)
+[![go reference](https://pkg.go.dev/badge/github.com/caparicio-esd/alexandria.svg)](https://pkg.go.dev/github.com/caparicio-esd/alexandria)
+[![version](https://img.shields.io/github/v/tag/caparicio-esd/alexandria?label=version&sort=semver&color=blue)](https://github.com/caparicio-esd/alexandria/tags)
+[![container](https://img.shields.io/badge/quay.io-alexandria-EE0000?logo=redhat&logoColor=white)](https://quay.io/repository/alexandria/alexandria)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![last commit](https://img.shields.io/github/last-commit/caparicio-esd/alexandria?color=6f42c1)](https://github.com/caparicio-esd/alexandria/commits/main)
+[![issues](https://img.shields.io/github/issues/caparicio-esd/alexandria)](https://github.com/caparicio-esd/alexandria/issues)
+
+<!-- What it is built on, and what it deploys onto. -->
+
+[![go](https://img.shields.io/github/go-mod/go-version/caparicio-esd/alexandria?logo=go&logoColor=white&label=go)](go.mod)
+[![postgres](https://img.shields.io/badge/postgres-17-4169E1?logo=postgresql&logoColor=white)](docker-compose.dev.yaml)
+[![zitadel](https://img.shields.io/badge/zitadel-v4-2b3990?logo=auth0&logoColor=white)](#authentication)
+[![caddy](https://img.shields.io/badge/caddy-2-1F88C0?logo=caddy&logoColor=white)](Caddyfile)
+[![docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](deploy/docker/README.md)
+[![helm](https://img.shields.io/badge/helm-chart-0F1689?logo=helm&logoColor=white)](k8s/README.md)
+[![kubernetes](https://img.shields.io/badge/kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](k8s/README.md)
+[![task](https://img.shields.io/badge/task-runner-29BEB0?logo=task&logoColor=white)](Taskfile.yaml)
+[![adr](https://img.shields.io/badge/decisions-ADR-informational)](docs/adr/README.md)
+
 A vocabulary hub for a dataspace.
 
 **Current state:** the identity and authorization layer is what exists today.
