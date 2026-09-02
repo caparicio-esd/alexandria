@@ -22,7 +22,7 @@ coverage.html
 
 # Helm subcharts, fetched by `helm dependency update`. Chart.lock is committed —
 # it pins what was fetched — but the archives themselves are downloads.
-/k8s/charts/*/charts/
+/deploy/k8s/charts/*/charts/
 
 # Secrets and local configuration
 .env

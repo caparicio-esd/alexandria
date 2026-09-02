@@ -93,7 +93,7 @@ services:
     # No healthcheck: the image is distroless — no shell, no curl, no wget —
     # and the binary is the only executable in it, so there is nothing compose
     # could run inside the container to probe /readyz. Caddy retries the
-    # upstream, and the Kubernetes chart under k8s/ has real probes because
+    # upstream, and the Kubernetes chart under deploy/k8s/ has real probes because
     # there the kubelet does the probing from outside.
     depends_on:
       postgres:

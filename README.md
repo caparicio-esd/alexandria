@@ -21,12 +21,13 @@
 [![zitadel](https://img.shields.io/badge/zitadel-v4-2b3990?logo=auth0&logoColor=white)](#authentication)
 [![caddy](https://img.shields.io/badge/caddy-2-1F88C0?logo=caddy&logoColor=white)](Caddyfile)
 [![docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](deploy/docker/README.md)
-[![helm](https://img.shields.io/badge/helm-chart-0F1689?logo=helm&logoColor=white)](k8s/README.md)
-[![kubernetes](https://img.shields.io/badge/kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](k8s/README.md)
+[![helm](https://img.shields.io/badge/helm-chart-0F1689?logo=helm&logoColor=white)](deploy/k8s/README.md)
+[![kubernetes](https://img.shields.io/badge/kubernetes-ready-326CE5?logo=kubernetes&logoColor=white)](deploy/k8s/README.md)
 [![task](https://img.shields.io/badge/task-runner-29BEB0?logo=task&logoColor=white)](Taskfile.yaml)
 [![adr](https://img.shields.io/badge/decisions-ADR-informational)](docs/adr/README.md)
 
-A vocabulary hub for a dataspace.
+An IDS Vocabulary Hub: the service a dataspace uses to host, maintain, publish
+and dereference the vocabularies its participants describe data with.
 
 **Current state:** the identity and authorization layer is what exists today.
 The node holds a decentralised identifier, serves the DID Document that makes it
@@ -34,6 +35,39 @@ resolvable, and delegates key material to an external wallet. Access to its API
 is closed behind a Zitadel the caller never addresses directly — see
 [Authentication](#authentication). The vocabulary work comes next, as a second
 bounded context alongside it.
+
+## What a vocabulary hub is for
+
+Interoperability in an IDS dataspace rests on participants using the same terms
+to describe data, services and contracts. Collections of those terms are
+vocabularies, and the IDS Information Model is the one every participant shares
+— which makes it, by construction, the lowest common denominator. Any specific
+domain needs more than that.
+
+A Vocabulary Hub is where the additional vocabularies live. It exists because
+extending the Information Model is only useful if the extensions are published
+and reachable the same way the core one is.
+
+It has two jobs.
+
+**Maintaining vocabularies.** Domain experts create, refine, document and
+publish their terms here, and import third-party vocabularies so connectors can
+use them. Terms are expected to be RDF; Linked Data conventions and formal
+ontologies are encouraged and not enforced. What the hub gives back is access to
+a whole vocabulary, a part of it, or an individual term.
+
+**Runtime lookups.** A connector reading a Self-Description meets an attribute
+whose IRI means nothing to it. It dereferences that IRI at the hub and gets back
+a small RDF document: the term's class, its labels in whatever languages exist,
+a short description. The meaning arrives at the point it is needed rather than
+being agreed in advance.
+
+The same lookup works a namespace at a time. Asking for an unknown namespace —
+the way the Information Model uses `ids`
+([w3id.org/idsa/core](http://w3id.org/idsa/core/)) and `idsc`
+([w3id.org/idsa/code](http://w3id.org/idsa/code/)) — returns the whole
+vocabulary with the relations between its terms. That document is larger, and a
+connector that caches it stops asking, which is usually the cheaper trade.
 
 ## Requirements
 
@@ -693,6 +727,9 @@ internal/ssi-auth/         The identity bounded context:
   rest/                      driving adapter, the HTTP API and its middleware
 migrations/                Database migrations.
 scripts/                   Provisioning: the Zitadel bootstrap and the local CA.
+deploy/docker/             Deployment on one host, with Docker and Caddy.
+deploy/k8s/                Deployment on Kubernetes: the Helm chart.
+docs/adr/                  Architecture decision records.
 Caddyfile                  The local TLS terminator's configuration.
 docker-compose.dev.yaml    Postgres, Zitadel and Caddy for development.
 ```
@@ -728,6 +765,31 @@ docker run --rm \
 The image carries no configuration, so mount one where the search path expects
 it — or point `$ALEXANDRIA_CONFIG` at it. Without a document the node exits
 rather than starting on guessed defaults.
+
+Published images are built from this same Dockerfile by
+[.github/workflows/release.yaml](.github/workflows/release.yaml) on every `v*`
+tag, for `linux/amd64` and `linux/arm64`.
+
+## Deploying
+
+Three descriptions of how to run this, each honest about what it is for. The
+reasoning is in [0006](docs/adr/0006-one-image-three-deployment-shapes.md).
+
+| | For |
+|---|---|
+| [docker-compose.dev.yaml](docker-compose.dev.yaml) | Development. Infrastructure only — the node runs on the host under `task dev` |
+| [deploy/docker/](deploy/docker/README.md) | One host, with Docker. The whole stack, Caddy issuing from Let's Encrypt |
+| [deploy/k8s/](deploy/k8s/README.md) | A Helm chart, with the database and identity provider behind flags that are off by default |
+
+Both deployments need a two-pass install, because Zitadel mints the OAuth client
+id and it cannot be chosen. Neither pretends otherwise.
+
+## Decisions
+
+[docs/adr/](docs/adr/README.md) holds a record per decision that was expensive
+to make and would be expensive to reverse — what was decided, what it costs, and
+what would have to be true to decide otherwise. Start there rather than here if
+you are trying to work out why something is the shape it is.
 
 ## License
 

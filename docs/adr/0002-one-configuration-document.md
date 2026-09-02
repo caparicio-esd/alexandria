@@ -37,7 +37,7 @@ written before a setting existed still loads and still behaves sensibly.
 
 ## Consequences
 
-The deployment files under `deploy/` and `k8s/` are committed and carry no
+The deployment files under `deploy/` are committed and carry no
 credentials, and every one of them is a readable description of what the node
 will do. The Helm chart renders the same document into a ConfigMap and injects
 three variables from a Secret.

@@ -2,9 +2,9 @@
 # nip.io, which resolves anything.127.0.0.1.nip.io to 127.0.0.1 and so needs no
 # entry in /etc/hosts and no DNS of your own.
 #
-#   helm dependency update k8s/charts/alexandria
-#   helm upgrade --install alexandria k8s/charts/alexandria \
-#     -f k8s/charts/alexandria/values-dev.yaml \
+#   helm dependency update deploy/k8s/charts/alexandria
+#   helm upgrade --install alexandria deploy/k8s/charts/alexandria \
+#     -f deploy/k8s/charts/alexandria/values-dev.yaml \
 #     --set auth.sessionKey=$(openssl rand -hex 32) \
 #     --namespace alexandria --create-namespace
 #
@@ -14,7 +14,7 @@
 #   --set ingress.host=alexandria.$(minikube ip).nip.io \
 #   --set auth.host=auth.$(minikube ip).nip.io
 #
-# See k8s/README.md for what to do after the first install: the identity
+# See deploy/k8s/README.md for what to do after the first install: the identity
 # provider mints the client id, so there are two passes.
 
 # Everything in one namespace, including the things a real deployment would

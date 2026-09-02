@@ -16,9 +16,9 @@ passes, and the chart says so in its install notes rather than pretending
 otherwise.
 
 ```sh
-helm dependency update k8s/charts/alexandria
+helm dependency update deploy/k8s/charts/alexandria
 
-helm upgrade --install alexandria k8s/charts/alexandria \
+helm upgrade --install alexandria deploy/k8s/charts/alexandria \
   --namespace alexandria --create-namespace \
   -f my-values.yaml \
   --set auth.sessionKey="$(openssl rand -hex 32)"
@@ -81,14 +81,14 @@ node, database, identity provider — reachable over
 With kind, and an ingress controller that publishes on the host:
 
 ```sh
-kind create cluster --config k8s/kind-cluster.yaml
+kind create cluster --config deploy/k8s/kind-cluster.yaml
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 kubectl -n ingress-nginx wait --for=condition=ready pod \
   -l app.kubernetes.io/component=controller --timeout=180s
 
-helm dependency update k8s/charts/alexandria
-helm upgrade --install alexandria k8s/charts/alexandria \
-  -f k8s/charts/alexandria/values-dev.yaml \
+helm dependency update deploy/k8s/charts/alexandria
+helm upgrade --install alexandria deploy/k8s/charts/alexandria \
+  -f deploy/k8s/charts/alexandria/values-dev.yaml \
   --namespace alexandria --create-namespace \
   --set auth.sessionKey="$(openssl rand -hex 32)"
 ```
@@ -129,7 +129,7 @@ addresses.
 
 Pin `image.tag`. `:latest` moving underneath a `helm upgrade` is a change to how
 every login behaves, and it is not what a rollback rolls back to. Tags are
-published by [.github/workflows/release.yaml](../.github/workflows/release.yaml)
+published by [.github/workflows/release.yaml](../../.github/workflows/release.yaml)
 on every `v*` git tag.
 
 ## What is deliberately not exposed

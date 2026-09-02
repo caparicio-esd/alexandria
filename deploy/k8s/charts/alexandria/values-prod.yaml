@@ -1,7 +1,7 @@
 # The shape of a deployment, not a deployment. Copy it, fill in the addresses,
 # and keep the secrets out of it — see `existingSecret` at the bottom.
 #
-#   helm upgrade --install alexandria k8s/charts/alexandria \
+#   helm upgrade --install alexandria deploy/k8s/charts/alexandria \
 #     -f my-values.yaml --namespace alexandria --create-namespace
 #
 # What differs from the defaults is only what a deployment actually decides:

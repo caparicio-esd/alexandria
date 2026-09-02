@@ -3,9 +3,9 @@
 # something: alexandria.127.0.0.1.nip.io answers 127.0.0.1, and 127.0.0.1:80
 # has to be the controller.
 #
-#   kind create cluster --config k8s/kind-cluster.yaml
+#   kind create cluster --config deploy/k8s/kind-cluster.yaml
 #
-# See k8s/README.md for what to install into it.
+# See deploy/k8s/README.md for what to install into it.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: alexandria
